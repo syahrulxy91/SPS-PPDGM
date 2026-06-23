@@ -31,8 +31,7 @@ const UNITS = [
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const user = getCurrentAppUser();
-  const isSuperAdmin = user?.role === 'SUPER ADMIN' || 
-                       user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
+  const isSuperAdmin = user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -187,7 +186,7 @@ export default function DashboardLayout() {
                 <div className="text-xs font-extrabold text-slate-700 leading-tight">{user?.name}</div>
                 <div className="text-[10px] text-slate-400 font-semibold tracking-wider mt-0.5 flex items-center justify-end gap-1 uppercase">
                   <span className={`w-1.5 h-1.5 rounded-full ${isSuperAdmin ? 'bg-red-500' : 'bg-indigo-500'}`}></span>
-                  {user?.role}
+                  {isSuperAdmin ? 'PENTADBIR SISTEM' : 'PEGAWAI MOE'}
                 </div>
               </div>
               <div className="relative">

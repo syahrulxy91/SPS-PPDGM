@@ -1,7 +1,6 @@
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { auth, db } from './firebase';
-import { AppUser, UserRole, Unit } from '../types';
-import { getDoc, doc } from 'firebase/firestore';
+import { auth } from './firebase';
+import { AppUser } from '../types';
 
 // Set Firebase Auth Persistence explicitly to browserLocalPersistence for reliable session tracking
 setPersistence(auth, browserLocalPersistence)
@@ -26,12 +25,27 @@ export const initAuth = (
     console.log('[DEBUG AUTH] onAuthStateChanged dipanggil. User Firebase:', user?.email, 'auth.currentUser:', auth.currentUser?.email);
     
     if (user) {
+      const email = user.email || '';
+      const emailLower = email.toLowerCase();
+      const isMoeEmail = emailLower.endsWith('@moe.gov.my');
+      const isMaintainer = emailLower === 'syahrulxy91@gmail.com';
+
+      if (!isMoeEmail && !isMaintainer) {
+        console.warn('[SECURITY] Domain email tidak sah dikesan di onAuthStateChanged. Sign out...');
+        await signOut(auth).catch(() => {});
+        cachedAccessToken = null;
+        currentAppUser = null;
+        sessionStorage.removeItem('sps_auth_token');
+        sessionStorage.removeItem('sps_auth_user');
+        if (onAuthFailure) onAuthFailure();
+        return;
+      }
+
       if (!cachedAccessToken) {
         cachedAccessToken = sessionStorage.getItem('sps_auth_token');
       }
 
       try {
-        // Guna dynamic fallback token jika cachedAccessToken tiada (cth: refresh or tab baru)
         const token = cachedAccessToken || (await user.getIdToken());
         cachedAccessToken = token;
         sessionStorage.setItem('sps_auth_token', token);
@@ -73,8 +87,22 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       console.error('[DEBUG AUTH] Diagnosis LocalStorage GAGAL (Mungkin sekatan kuki pihak ketiga/kuki iframe diaktifkan oleh penyemak imbas):', e);
     }
 
+    const email = result.user.email || '';
+    const emailLower = email.toLowerCase().trim();
+    const isMoeEmail = emailLower.endsWith('@moe.gov.my');
+    const isMaintainer = emailLower === 'syahrulxy91@gmail.com';
+
+    if (!isMoeEmail && !isMaintainer) {
+      console.warn('[SECURITY] Sesi ditolak kerana bukan domain @moe.gov.my.');
+      await signOut(auth).catch(() => {});
+      cachedAccessToken = null;
+      currentAppUser = null;
+      sessionStorage.removeItem('sps_auth_token');
+      sessionStorage.removeItem('sps_auth_user');
+      throw new Error('Hanya pengguna dengan email @moe.gov.my dibenarkan mengakses sistem ini.');
+    }
+
     const credential = GoogleAuthProvider.credentialFromResult(result);
-    // Gunakan fallback idToken sekiranya credential Google Access Token null dalam beberapa senario iframe sandbox
     const fallbackIdToken = await result.user.getIdToken(true);
     const resolvedAccessToken = credential?.accessToken || fallbackIdToken;
 
@@ -83,34 +111,12 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
 
     cachedAccessToken = resolvedAccessToken;
-    const email = result.user.email || 'unknown@example.com';
-    const emailLower = email.toLowerCase();
-    
-    // Default role is ADMIN SPS so registered users can do all actions (adds, uploads, etc.)
-    let role: UserRole = 'ADMIN SPS';
-    let assignedUnit: Unit | undefined = undefined;
-
-    // WAJIB tetapkan hanya email syahrulxy91@gmail.com sebagai superadmin utama
-    if (emailLower === 'syahrulxy91@gmail.com') {
-      role = 'SUPER ADMIN';
-    } else {
-      // Check if this email is registered in registeredEmails Firestore collection
-      const docRef = doc(db, 'registeredEmails', emailLower);
-      const docSnap = await getDoc(docRef);
-      if (!docSnap.exists()) {
-        // Sign out immediately to prevent stale session
-        await signOut(auth).catch(() => {});
-        throw new Error('NOT_REGISTERED');
-      }
-    }
 
     currentAppUser = {
       uid: result.user.uid,
-      name: result.user.displayName || 'Unknown User',
+      name: result.user.displayName || 'Pengguna',
       email: email,
       photoURL: result.user.photoURL || '',
-      role: role,
-      ...(assignedUnit ? { unit: assignedUnit } : {})
     };
 
     // Keep logged-in user logging for display in Admin panel (Kakitangan Bersistem)
@@ -120,11 +126,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     const existsIdx = loggedInUsers.findIndex((u: any) => u.email.toLowerCase() === emailLower);
     const userInfo = {
       email: email,
-      name: result.user.displayName || 'Unknown User',
+      name: result.user.displayName || 'Pengguna',
       photoURL: result.user.photoURL || '',
       lastLogin: new Date().toISOString(),
-      role: role,
-      unit: assignedUnit || ''
     };
     
     if (existsIdx > -1) {

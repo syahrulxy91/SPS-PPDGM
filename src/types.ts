@@ -1,5 +1,3 @@
-export type UserRole = 'SUPER ADMIN' | 'ADMIN SPS' | 'KETUA UNIT' | 'PEGAWAI' | 'PEMERHATI';
-
 export type Unit = 
   | 'UNIT SWASTA' 
   | 'UNIT RENDAH' 
@@ -87,7 +85,5 @@ export interface AppUser {
   name: string;
   email: string;
   photoURL: string;
-  role: UserRole;
-  unit?: Unit;
 }
 

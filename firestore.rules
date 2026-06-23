@@ -1,42 +1,40 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default-deny Catch-all Gatekeeper
+    // Default Catch-all Deny
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Check if user is a dynamic Super Admin
-    function isSuperAdminUser() {
-      return request.auth != null && 
-        request.auth.token.email != null && (
-          request.auth.token.email == "syahrulxy91@gmail.com" ||
-          request.auth.token.email.toLower() == "syahrulxy91@gmail.com"
-        );
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Rules for centralized system settings
+    function isMaintainer() {
+      return isSignedIn() && 
+        request.auth.token.email != null && 
+        request.auth.token.email == "syahrulxy91@gmail.com";
+    }
+
+    // Centralized Google Drive & System Settings Configuration
     match /systemSettings/{configId} {
-      allow read: if true; // Any logged-in as well as visitor can view config
-      allow write: if isSuperAdminUser();
+      // Allow authenticated user with @moe.gov.my or maintainer to read configuration settings
+      allow read: if isSignedIn() && (
+        request.auth.token.email == "syahrulxy91@gmail.com" || 
+        request.auth.token.email.endsWith("@moe.gov.my")
+      );
+      // Only the static system maintainer can write to systemSettings
+      allow write: if isMaintainer();
     }
 
-    // Rules for PPD Gua Musang Organizational Structure
+    // Sektor Pengurusan Sekolah Organizational Structure
     match /organisasi/{nodeId} {
-      allow read: if true; // All authorized readers can view the structural design
-      allow write: if isSuperAdminUser();
-    }
-
-    // Rules for Role Assignments
-    match /roleAssignments/{email} {
-      allow read: if request.auth != null; // All authenticated users can read to fetch their role
-      allow write: if isSuperAdminUser();
-    }
-
-    // Rules for Registered Emails Only
-    match /registeredEmails/{email} {
-      allow read: if request.auth != null; // All authenticated users can read/check registered emails
-      allow write: if isSuperAdminUser();
+      allow read: if isSignedIn() && (
+        request.auth.token.email == "syahrulxy91@gmail.com" || 
+        request.auth.token.email.endsWith("@moe.gov.my")
+      );
+      allow write: if isMaintainer();
     }
   }
 }

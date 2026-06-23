@@ -29,7 +29,7 @@ export default function PengumumanView() {
 
   useEffect(() => { loadData(); }, []);
 
-  const isAdmin = user?.role === 'SUPER ADMIN' || user?.role === 'ADMIN SPS';
+  const isAdmin = user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

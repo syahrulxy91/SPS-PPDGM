@@ -29,8 +29,7 @@ const withWriteTimeout = <T extends unknown>(promise: Promise<T>, timeoutMs: num
 
 export default function MainDashboard() {
   const user = getCurrentAppUser();
-  const isSuperAdminUser = user?.role === 'SUPER ADMIN' || 
-                           user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
+  const isSuperAdminUser = user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
 
   const [loading, setLoading] = useState(() => {
     const cachedStats = localStorage.getItem('sps_dashboard_stats');
@@ -54,7 +53,7 @@ export default function MainDashboard() {
   const [showStandardPreview, setShowStandardPreview] = useState(false);
 
   // Super Admin administrative panel tabs
-  const [adminSectionTab, setAdminSectionTab] = useState<'status' | 'drive' | 'source' | 'roles'>('status');
+  const [adminSectionTab, setAdminSectionTab] = useState<'status' | 'drive' | 'source'>('status');
 
   // Centralized Google Drive Configuration state
   const [googleDriveConfig, setGoogleDriveConfig] = useState(() => getGoogleDriveConfigSync());
@@ -84,55 +83,15 @@ export default function MainDashboard() {
     };
   });
 
-  // Registered Emails management parameters
-  const [registeredEmails, setRegisteredEmails] = useState<Record<string, { email: string; createdAt?: string; createdBy?: string }>>(() => {
-    const custom = localStorage.getItem('sps_registered_emails');
-    return custom ? JSON.parse(custom) : {};
-  });
-
-  const [loggedInUsers, setLoggedInUsers] = useState<any[]>(() => {
-    const custom = localStorage.getItem('sps_logged_in_users');
-    return custom ? JSON.parse(custom) : [];
-  });
-
   // Source configuration
   const [primaryFileSource, setPrimaryFileSource] = useState(() => {
     return localStorage.getItem('sps_primary_file_source') || 'local_storage';
   });
 
-  // Registered Emails addition form parameters
-  const [newEmail, setNewEmail] = useState('');
-
   // Status indicators for saves
   const [driveSaveSuccess, setDriveSaveSuccess] = useState(false);
   const [sourceSaveSuccess, setSourceSaveSuccess] = useState(false);
-  const [roleSaveSuccess, setRoleSaveSuccess] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-
-  // Sync registeredEmails from Firestore in real-time
-  useEffect(() => {
-    const colRef = collection(db, 'registeredEmails');
-    const unsubscribe = onSnapshot(colRef, (snap) => {
-      const emailList: Record<string, { email: string; createdAt?: string; createdBy?: string }> = {};
-      snap.forEach((docSnap) => {
-        const data = docSnap.data();
-        emailList[docSnap.id.toLowerCase()] = {
-          email: data.email || docSnap.id,
-          createdAt: data.createdAt,
-          createdBy: data.createdBy
-        };
-      });
-      setRegisteredEmails(emailList);
-      localStorage.setItem('sps_registered_emails', JSON.stringify(emailList));
-    }, (err) => {
-      console.warn("Gagal mematangkan registeredEmails dari Firebase:", err);
-      if (auth.currentUser) {
-        handleFirestoreError(err, OperationType.GET, 'registeredEmails');
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
 
   // Fetch metrics data on component mount
   useEffect(() => {
@@ -277,110 +236,6 @@ export default function MainDashboard() {
   };
 
   // Add registered email
-  const handleAddRegisteredEmail = async () => {
-    const email = newEmail.trim().toLowerCase();
-    if (!email) {
-      alert("Sila masukkan email terlebih dahulu.");
-      return;
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      alert("Format email tidak sah.");
-      return;
-    }
-
-    if (email === 'syahrulxy91@gmail.com') {
-      alert("Akaun Super Admin utama sentiasa berdaftar dan tidak boleh ditambah.");
-      return;
-    }
-
-    if (registeredEmails[email]) {
-      alert("Email ini sudah didaftarkan.");
-      return;
-    }
-
-    const payload = {
-      email,
-      createdAt: new Date().toISOString(),
-      createdBy: auth.currentUser?.email || 'syahrulxy91@gmail.com'
-    };
-
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-      console.error('Auth tidak aktif - auth.currentUser adalah null');
-      alert('Sesi log masuk tamat. Sila log keluar dan log masuk semula.');
-      return;
-    }
-
-    try {
-      // Force token refresh untuk pastikan token segar
-      await currentUser.getIdToken(true);
-
-      // Direct Firestore write with timeout safety (defaults to 8000ms)
-      await withWriteTimeout(setDoc(doc(db, 'registeredEmails', email), payload));
-
-      setNewEmail('');
-      setRoleSaveSuccess(true);
-      setTimeout(() => setRoleSaveSuccess(false), 2000);
-
-      // Optimistic/Immediate UI Fallbacks
-      const updated = {
-        ...registeredEmails,
-        [email]: payload
-      };
-      localStorage.setItem('sps_registered_emails', JSON.stringify(updated));
-      setRegisteredEmails(updated);
-    } catch (err: any) {
-      console.error('Gagal mendaftar email ke Firestore:', err);
-      alert('Pendaftaran email gagal. Firestore menolak operasi. Sila semak sambungan atau log masuk semula.');
-      handleFirestoreError(err, OperationType.WRITE, 'registeredEmails/' + email);
-    }
-  };
-
-  // Delete registered email
-  const handleRemoveRegisteredEmail = async (email: string) => {
-    const emailLower = email.toLowerCase();
-    if (emailLower === 'syahrulxy91@gmail.com') {
-      alert("Tidak boleh memadam akaun utama Super Admin.");
-      return;
-    }
-
-    if (!window.confirm(`Adakah anda pasti mahu memadam ${email} daripada senarai email berdaftar?`)) {
-      return;
-    }
-
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-      console.error('Auth tidak aktif - auth.currentUser adalah null');
-      alert('Sesi log masuk tamat. Sila log keluar dan log masuk semula.');
-      return;
-    }
-
-    try {
-      // Force token refresh untuk pastikan token segar
-      await currentUser.getIdToken(true);
-
-      // Direct Firestore delete with timeout safety (defaults to 8000ms)
-      await withWriteTimeout(deleteDoc(doc(db, 'registeredEmails', emailLower)));
-
-      const updated = { ...registeredEmails };
-      delete updated[emailLower];
-      localStorage.setItem('sps_registered_emails', JSON.stringify(updated));
-      setRegisteredEmails(updated);
-    } catch (err: any) {
-      console.error('Gagal memadam email berdaftar dari Firestore:', err);
-      alert('Pemadaman email gagal. Firestore menolak operasi. Sila semak sambungan atau log masuk semula.');
-      handleFirestoreError(err, OperationType.DELETE, 'registeredEmails/' + emailLower);
-    }
-  };
-
-  const filteredUsers = loggedInUsers.filter(u => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    return u.email.toLowerCase().includes(query) || u.name.toLowerCase().includes(query);
-  });
-
   if (loading) {
     return (
       <div id="dashboard-loader" className="flex flex-col items-center justify-center py-24 text-slate-500 font-medium">
@@ -695,12 +550,11 @@ export default function MainDashboard() {
       </div>
 
       {/* Admin Modules Navigation */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/50">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/50">
         {[
           { id: 'status', label: 'Monitor & Status', icon: <Layers className="w-4.5 h-4.5" /> },
           { id: 'drive', label: 'Struktur Google Drive', icon: <HardDrive className="w-4.5 h-4.5" /> },
-          { id: 'source', label: 'Punca Storan Fail', icon: <Server className="w-4.5 h-4.5" /> },
-          { id: 'roles', label: 'Email User Berdaftar', icon: <UserCheck className="w-4.5 h-4.5" /> }
+          { id: 'source', label: 'Punca Storan Fail', icon: <Server className="w-4.5 h-4.5" /> }
         ].map((btn) => (
           <button
             key={btn.id}
@@ -734,7 +588,7 @@ export default function MainDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-5">
               <KPIBox title="Laporan Berdaftar" value={stats.total} icon={<FileText className="text-indigo-500" />} trend="Semua unit digabung" color="indigo" />
               <KPIBox title="Sektor Folders" value={9} icon={<Building className="text-violet-500" />} trend="Disediakan di e-Laporan" color="violet" />
-              <KPIBox title="Kakitangan Aktif" value={loggedInUsers.length || 1} icon={<Users className="text-amber-500" />} trend="Akses Google Auth" color="amber" />
+              <KPIBox title="Kakitangan Aktif" value={stats.activeUsers || 1} icon={<Users className="text-amber-500" />} trend="Akses Google Auth" color="amber" />
               <KPIBox title="Bulan Semasa" value={stats.currentMonth} icon={<Activity className="text-emerald-500" />} trend="Kemas kini Jun 22" color="emerald" />
             </div>
 
@@ -961,166 +815,6 @@ export default function MainDashboard() {
             </div>
           </div>
         )}
-
-        {/* MODULE 4: REGISTERED USER EMAILS ONLY */}
-        {adminSectionTab === 'roles' && (
-          <div className="space-y-7 animate-in fade-in duration-300">
-            <div className="bg-rose-50/80 border border-rose-100 text-[#0f2d52] p-5 rounded-2xl text-xs space-y-2 flex items-start gap-3.5">
-              <div className="p-2 bg-rose-500/10 border border-rose-500/20 rounded-xl">
-                <ShieldCheck className="w-5 h-5 text-rose-700 shrink-0" />
-              </div>
-              <div>
-                <p className="font-extrabold text-rose-950 text-sm">Sistem Kebenaran Kemasukan E-mel Berdaftar</p>
-                <p className="text-slate-500 leading-relaxed font-semibold">
-                  Akses log masuk kini dikawal sepenuhnya menggunakan senarai email berdaftar. Hanya alamat email yang tersenarai secara rasmi di bawah sahaja dibenarkan log masuk ke dalam Dashboard. Pengguna tidak berdaftar akan disekat serta-merta.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
-              {/* Add form card */}
-              <div id="add-role-panel" className="bg-slate-50 border border-slate-200/50 p-6 rounded-3xl space-y-4">
-                <h4 className="text-xs font-black text-[#0A192F] uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-200/50">
-                  <Plus className="w-4 h-4 text-[#1565C0]" />
-                  Daftarkan Alamat E-mel Baru
-                </h4>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Alamat E-mel Google/Gmail:</label>
-                  <input
-                    type="email"
-                    placeholder="example@gmail.com"
-                    value={newEmail}
-                    onChange={(e) => setNewEmail(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold outline-none focus:border-[#1565C0] transition-all text-slate-800"
-                  />
-                </div>
-
-                {roleSaveSuccess && (
-                  <p className="text-[10px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md font-bold text-center border border-emerald-200 animate-pulse">
-                    ✓ Alamat email berjaya didaftarkan ke dalam sistem.
-                  </p>
-                )}
-
-                <button
-                  onClick={handleAddRegisteredEmail}
-                  className="w-full py-2.5 bg-[#1565C0] hover:bg-[#0F2D52] text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-[#1b2f4a]"
-                >
-                  <UserPlus className="w-4 h-4 shrink-0" />
-                  Daftar Email
-                </button>
-              </div>
-
-              {/* Roles listing */}
-              <div className="lg:col-span-2 space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  <h4 className="text-xs font-black text-[#0A192F] uppercase tracking-wider block flex items-center gap-2">
-                    <Users className="w-4 h-4 text-indigo-500" />
-                    Senarai Email Berdaftar (Kebenaran Masuk)
-                  </h4>
-                  <div className="relative w-full sm:w-56 shrink-0">
-                    <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
-                    <input
-                      type="text"
-                      placeholder="Cari e-mel..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="border border-slate-200 rounded-3xl overflow-hidden divide-y divide-slate-100 max-h-[350px] overflow-y-auto">
-                  
-                  {/* Super admin predefined entry always shown */}
-                  <div className="grid grid-cols-12 p-3 items-center bg-slate-50/50">
-                    <div className="col-span-8 sm:col-span-6 flex items-center gap-2">
-                      <div className="w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">SA</div>
-                      <div className="truncate">
-                        <p className="font-bold text-slate-700 truncate text-[11px] leading-tight">Pengasas Utama (Sistem)</p>
-                        <p className="text-[10px] text-slate-400 font-mono truncate select-all">syahrulxy91@gmail.com</p>
-                      </div>
-                    </div>
-                    <div className="col-span-4 sm:col-span-4 flex justify-center gap-1">
-                      <span className="text-[9px] bg-red-50 text-red-600 font-black px-1.5 py-0.5 rounded-md border border-red-200 uppercase">SUPER ADMIN (UTAMA)</span>
-                    </div>
-                    <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 font-mono text-[9px] text-slate-400 font-bold pr-3">
-                      Kekal
-                    </div>
-                  </div>
-
-                  {/* Other assignments listed in real-time */}
-                  {Object.keys(registeredEmails).map((emailKey) => {
-                    if (emailKey.toLowerCase() === 'syahrulxy91@gmail.com') return null;
-                    if (searchQuery && !emailKey.toLowerCase().includes(searchQuery.toLowerCase())) return null;
-                    const data = registeredEmails[emailKey];
-                    return (
-                      <div key={emailKey} className="grid grid-cols-12 p-3 items-center hover:bg-slate-50/50">
-                        <div className="col-span-8 sm:col-span-6 flex items-center gap-2">
-                          <div className="w-6 h-6 bg-slate-100 text-slate-600 rounded-xl flex items-center justify-center font-extrabold text-[10px] shrink-0 font-mono">{emailKey[0].toUpperCase()}</div>
-                          <div className="truncate">
-                            <p className="text-[11px] font-bold text-slate-700 truncate select-all">{emailKey}</p>
-                            <p className="text-[9px] text-slate-400 truncate flex items-center gap-1">
-                              Daftar: {data.createdAt ? new Date(data.createdAt).toLocaleDateString('ms-MY') : 'Tiada Tarikh'}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="col-span-4 sm:col-span-4 flex flex-wrap justify-center gap-1">
-                          <span className="text-[9px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded-md border border-green-200 uppercase">PENGGUNA SAH</span>
-                        </div>
-                        <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 my-1 sm:my-0 pr-2">
-                          <button
-                            onClick={() => handleRemoveRegisteredEmail(emailKey)}
-                            className="p-1 px-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg flex items-center gap-1"
-                            title="Padam"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {/* Logged In list showing who is registered / who is blocked */}
-                  {filteredUsers.map((userObj: any) => {
-                    const lowerEmail = userObj.email.toLowerCase();
-                    if (registeredEmails[lowerEmail] || lowerEmail === 'syahrulxy91@gmail.com') return null;
-                    return (
-                      <div key={userObj.uid || userObj.email} className="grid grid-cols-12 p-3 items-center hover:bg-slate-50/50">
-                        <div className="col-span-8 sm:col-span-6 flex items-center gap-2">
-                          {userObj.photoURL ? (
-                            <img src={userObj.photoURL} alt="p" className="w-6 h-6 rounded-xl shrink-0" />
-                          ) : (
-                            <div className="w-6 h-6 bg-slate-200 text-slate-600 rounded-xl flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">{userObj.name?.[0] || 'U'}</div>
-                          )}
-                          <div className="truncate">
-                            <p className="font-bold text-slate-700 truncate text-[11px] leading-tight">{userObj.name || 'User'}</p>
-                            <p className="text-[10px] text-slate-400 font-mono truncate select-all">{lowerEmail}</p>
-                          </div>
-                        </div>
-                        <div className="col-span-4 sm:col-span-4 flex justify-center gap-1">
-                          <span className="text-[9px] bg-red-50 text-red-600 font-extrabold px-1.5 py-0.5 rounded border border-red-200 uppercase">BELUM BERDAFTAR</span>
-                        </div>
-                        <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 mt-2 sm:mt-0 pr-2">
-                          <button
-                            onClick={() => {
-                              setNewEmail(lowerEmail);
-                            }}
-                            className="px-2 py-1 text-emerald-600 hover:text-emerald-700 bg-white border border-slate-200 hover:border-emerald-200 rounded-lg text-[10px] font-extrabold"
-                          >
-                            Pilih E-mel
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
       </div>
 
     </div>

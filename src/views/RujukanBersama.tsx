@@ -54,15 +54,13 @@ export default function RujukanBersama() {
           <p className="text-slate-500 mt-1">Pusat sumber dokumen rasmi, pekeliling, dan garis panduan PPD.</p>
         </div>
         
-        {user?.role !== 'PEMERHATI' && (
-          <button 
-            onClick={() => setShowUpload(true)}
-            className="flex items-center space-x-2 bg-[#1565C0] hover:bg-[#0F2D52] text-white px-4 py-2.5 rounded-lg transition-colors font-medium shadow-sm"
-          >
-            <Plus size={18} />
-            <span>Tambah Dokumen</span>
-          </button>
-        )}
+        <button 
+          onClick={() => setShowUpload(true)}
+          className="flex items-center space-x-2 bg-[#1565C0] hover:bg-[#0F2D52] text-white px-4 py-2.5 rounded-lg transition-colors font-medium shadow-sm"
+        >
+          <Plus size={18} />
+          <span>Tambah Dokumen</span>
+        </button>
       </div>
 
       <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden flex flex-col hover:border-[#1565C0]/30 transition-colors">

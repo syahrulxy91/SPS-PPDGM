@@ -80,51 +80,16 @@ export default function LandingPage() {
     };
   });
 
-  // Registered Emails states
-  const [registeredEmails, setRegisteredEmails] = useState<Record<string, { email: string; createdAt?: string; createdBy?: string }>>(() => {
-    const custom = localStorage.getItem('sps_registered_emails');
-    return custom ? JSON.parse(custom) : {};
-  });
-
   const [loggedInUsers, setLoggedInUsers] = useState<any[]>(() => {
     const custom = localStorage.getItem('sps_logged_in_users');
     return custom ? JSON.parse(custom) : [];
   });
-
-  // Registered Emails addition form states
-  const [newEmail, setNewEmail] = useState('');
 
   // Status flags
   const [driveSaveSuccess, setDriveSaveSuccess] = useState(false);
   const [roleSaveSuccess, setRoleSaveSuccess] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
-
-  // Sync registeredEmails from Firestore in real-time
-  useEffect(() => {
-    const colRef = collection(db, 'registeredEmails');
-    const unsubscribe = onSnapshot(colRef, (snap) => {
-      const emailList: Record<string, { email: string; createdAt?: string; createdBy?: string }> = {};
-      snap.forEach((docSnap) => {
-        const data = docSnap.data();
-        emailList[docSnap.id.toLowerCase()] = {
-          email: data.email || docSnap.id,
-          createdAt: data.createdAt,
-          createdBy: data.createdBy
-        };
-      });
-      setRegisteredEmails(emailList);
-      localStorage.setItem('sps_registered_emails', JSON.stringify(emailList));
-    }, (err) => {
-      console.warn("Gagal memuatkan senarai email berdaftar secara masa-nyata dari Firestore:", err);
-      const cached = sessionStorage.getItem('sps_auth_user');
-      if (cached) {
-        handleFirestoreError(err, OperationType.GET, 'registeredEmails');
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
 
   const handleLogin = async () => {
     try {
@@ -136,11 +101,7 @@ export default function LandingPage() {
       }
     } catch (e: any) {
       console.error(e);
-      if (e?.message === 'NOT_REGISTERED') {
-        alert('Email ini tidak berdaftar. Sila rujuk admin halaman.');
-      } else {
-        setAuthError(e?.message || String(e));
-      }
+      setAuthError(e?.message || String(e));
     }
   };
 
@@ -189,79 +150,6 @@ export default function LandingPage() {
     } catch (e) {
       console.error(e);
       alert('Gagal menyelaraskan konfigurasi Google Drive ke Firestore Pelayan.');
-    }
-  };
-
-  const addRegisteredEmail = async (emailToAssign?: string) => {
-    const email = (emailToAssign || newEmail).trim().toLowerCase();
-    if (!email) {
-      alert("Sila masukkan email terlebih dahulu.");
-      return;
-    }
-
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      alert("Format email tidak sah.");
-      return;
-    }
-
-    if (email === 'syahrulxy91@gmail.com') {
-      alert("Akaun Super Admin utama sentiasa berdaftar dan tidak boleh ditambah.");
-      return;
-    }
-
-    if (registeredEmails[email]) {
-      alert("Email ini sudah didaftarkan.");
-      return;
-    }
-
-    const payload = {
-      email,
-      createdAt: new Date().toISOString(),
-      createdBy: sessionUser?.email || 'syahrulxy91@gmail.com'
-    };
-
-    try {
-      await withWriteTimeout(setDoc(doc(db, 'registeredEmails', email), payload), 3000);
-
-      setNewEmail('');
-      setRoleSaveSuccess(true);
-      setTimeout(() => setRoleSaveSuccess(false), 2500);
-
-      const updated = {
-        ...registeredEmails,
-        [email]: payload
-      };
-      localStorage.setItem('sps_registered_emails', JSON.stringify(updated));
-      setRegisteredEmails(updated);
-    } catch (e: any) {
-      console.error('Gagal mendaftar email baru:', e);
-      alert('Gagal mendaftar email ke cloud. Sila periksa internet dan pastikan akaun anda mempunyai kuasa Super Admin.');
-      handleFirestoreError(e, OperationType.WRITE, 'registeredEmails/' + email);
-    }
-  };
-
-  const removeRegisteredEmail = async (email: string) => {
-    const emailLower = email.toLowerCase();
-    if (emailLower === 'syahrulxy91@gmail.com') {
-      alert("Tidak boleh memadam akaun utama Super Admin.");
-      return;
-    }
-    if (!window.confirm(`Adakah anda pasti mahu memadam ${email} daripada senarai email berdaftar?`)) {
-      return;
-    }
-    try {
-      await withWriteTimeout(deleteDoc(doc(db, 'registeredEmails', emailLower)), 3000);
-
-      const updated = { ...registeredEmails };
-      delete updated[emailLower];
-      localStorage.setItem('sps_registered_emails', JSON.stringify(updated));
-      setRegisteredEmails(updated);
-    } catch (e: any) {
-      console.error('Gagal memadam email berdaftar:', e);
-      alert('Gagal memadam email dari cloud.');
-      handleFirestoreError(e, OperationType.DELETE, 'registeredEmails/' + emailLower);
     }
   };
 
@@ -348,37 +236,38 @@ export default function LandingPage() {
             </button>
 
             {authError && (
-              <div id="auth-error-alert" className="bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl p-4 text-left space-y-3 w-full">
+              <div id="auth-error-alert" className="bg-red-50 border border-red-200 text-red-900 text-xs rounded-xl p-4 text-left space-y-3 w-full">
                 {authError.includes('unauthorized-domain') ? (
                   <>
-                    <h4 className="font-bold font-sans text-amber-950 flex items-center gap-1.5 text-sm">
+                    <h4 className="font-bold font-sans text-[#0f2d52] flex items-center gap-1.5 text-sm">
                       <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span>
                       Domain Belum Dibenarkan (Unauthorized Domain)
                     </h4>
                     <p className="leading-relaxed text-slate-700">
                       Firebase memerlukan pihak pentadbir untuk mendaftarkan domain aplikasi ini di Firebase Console agar log masuk pihak ketiga (Google) berfungsi.
                     </p>
-                    <div className="bg-white border border-amber-200 rounded-lg p-2.5 space-y-2">
+                    <div className="bg-white border border-red-200 rounded-lg p-2.5 space-y-2">
                       <p className="font-semibold text-slate-800 text-[11px]">Sila salin dan tambah domain berikut:</p>
                       <div className="space-y-1.5 font-mono text-[10px] break-all select-all bg-slate-50 p-2 rounded border border-slate-100 text-slate-800">
                         <div>1. <span className="font-bold underline text-blue-700">{window.location.hostname}</span></div>
                         <div>2. <span className="font-bold underline text-blue-700">{window.location.hostname.replace('-dev-', '-pre-')}</span></div>
                       </div>
                     </div>
-                    <div className="text-[11px] text-slate-600 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                      <strong className="text-slate-800">Langkah Penyelesaian (5 Saat):</strong>
-                      <ol className="list-decimal pl-4 mt-1 space-y-1.5">
-                        <li>Buka panel <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-[#1565C0] font-semibold hover:underline">Firebase Console</a></li>
-                        <li>Pergi ke menu hias kiri <strong>Build</strong> &gt; <strong>Authentication</strong></li>
-                        <li>Pilih tab <strong>Settings</strong> di bahagian atas &gt; klik menu <strong>Authorized domains</strong></li>
-                        <li>Klik butang <strong>Add domain</strong> &gt; Tampalkan domain di atas &gt; Klik <strong>Add</strong></li>
-                      </ol>
-                    </div>
+                  </>
+                ) : authError.includes('@moe.gov.my') ? (
+                  <>
+                    <h4 className="font-extrabold font-sans text-red-950 flex items-center gap-1.5 text-sm">
+                      <ShieldAlert className="w-4 h-4 text-red-600" />
+                      Akses Disekat
+                    </h4>
+                    <p className="leading-relaxed font-semibold text-red-900">
+                      Hanya pengguna dengan email @moe.gov.my dibenarkan mengakses sistem ini.
+                    </p>
                   </>
                 ) : (
                   <>
-                    <p className="font-bold font-sans text-amber-950">Ralat Log Masuk</p>
-                    <p className="leading-relaxed font-sans text-slate-700">Pelayar anda menyekat tetingkap timbul (pop-up) atau ia ditutup sebelum proses selesai. Sila cuba lagi atau hubungi pentadbir sistem.</p>
+                    <p className="font-bold font-sans text-red-950">Ralat Log Masuk</p>
+                    <p className="leading-relaxed font-sans text-slate-700">{authError}</p>
                   </>
                 )}
               </div>
@@ -534,31 +423,15 @@ export default function LandingPage() {
                   <div className="flex border-b border-slate-200 bg-white">
                     <button
                       onClick={() => setAdminTab('drive')}
-                      className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-xs font-extrabold border-b-2 transition-all cursor-pointer ${
-                        adminTab === 'drive'
-                          ? 'border-[#1565C0] text-[#1565C0] bg-slate-50/20'
-                          : 'border-transparent text-slate-500 hover:text-slate-800'
-                      }`}
+                      className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-xs font-extrabold border-b-2 transition-all cursor-pointer border-[#1565C0] text-[#1565C0] bg-slate-50/20`}
                     >
                       <Folder className="w-4 h-4" />
                       Struktur Google Drive Folder
-                    </button>
-                    <button
-                      onClick={() => setAdminTab('roles')}
-                      className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-xs font-extrabold border-b-2 transition-all cursor-pointer ${
-                        adminTab === 'roles'
-                          ? 'border-[#1565C0] text-[#1565C0] bg-slate-50/20'
-                          : 'border-transparent text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      <UserPlus className="w-4 h-4" />
-                      Email User Berdaftar ({Object.keys(registeredEmails).length + 1})
                     </button>
                   </div>
 
                   {/* Panel Details Container */}
                   <div className="p-6 overflow-y-auto max-h-[50vh] flex-1">
-                    {adminTab === 'drive' ? (
                       /* TAB 1: Drive Folder Settings */
                       <div className="space-y-5">
                         <div className="bg-blue-50/50 border border-blue-200 text-[#0F2D52] p-4 rounded-2xl text-xs space-y-1.5">
@@ -655,162 +528,6 @@ export default function LandingPage() {
                           </button>
                         </div>
                       </div>
-                    ) : (
-                      /* TAB 2: Registered User Emails UI */
-                      <div className="space-y-6">
-                        <div className="bg-amber-50/60 border border-amber-200 text-amber-900 p-4 rounded-2xl text-xs space-y-1">
-                          <p className="font-bold flex items-center gap-1 text-amber-950">
-                            <Users className="w-4 h-4 text-amber-700" />
-                            Sistem Kebenaran Kemasukan Sektor (Registered Emails Only)
-                          </p>
-                          <p className="text-slate-600">
-                            Akses log masuk kini dikawal sepenuhnya menggunakan senarai email berdaftar. Hanya alamat email yang tersenarai secara rasmi di bawah sahaja dibenarkan log masuk ke dalam Dashboard. Pengguna tidak berdaftar akan disekat serta-merta.
-                          </p>
-                        </div>
-
-                        {/* Add email form */}
-                        <div className="bg-white border border-slate-200 p-4 rounded-2xl space-y-3">
-                          <h4 className="text-xs font-extrabold text-[#0F2D52] uppercase tracking-wide">Daftarkan Alamat Email Baru:</h4>
-                          <div className="flex flex-col sm:flex-row gap-3">
-                            <div className="flex-1 space-y-1">
-                              <label className="text-[10px] font-bold text-slate-500">Alamat E-mel Google/Gmail:</label>
-                              <input
-                                type="email"
-                                placeholder="pegawai@gmail.com"
-                                value={newEmail}
-                                onChange={(e) => setNewEmail(e.target.value)}
-                                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs outline-none focus:bg-white focus:border-[#1565C0] font-medium"
-                              />
-                            </div>
-                            <div className="sm:pt-5 flex items-end">
-                              <button
-                                onClick={() => addRegisteredEmail()}
-                                className="w-full sm:w-auto px-5 py-2 bg-[#1565C0] hover:bg-[#0F2D52] text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 border border-slate-800"
-                              >
-                                <UserPlus className="w-3.5 h-3.5" />
-                                Daftar Email
-                              </button>
-                            </div>
-                          </div>
-                          {roleSaveSuccess && (
-                            <div className="text-xs text-green-600 font-bold">✓ Alamat email berjaya didaftarkan ke dalam sistem.</div>
-                          )}
-                        </div>
-
-                        {/* Recent User Login Quick Actions */}
-                        {loggedInUsers.length > 0 && (
-                          <div className="space-y-2">
-                            <h5 className="text-[11px] font-bold text-[#0F2D52] tracking-wider uppercase">Pegawai Yang Pernah Log Masuk Sistem:</h5>
-                            <div className="bg-white border border-slate-200/80 rounded-xl overflow-hidden text-xs">
-                              <div className="grid grid-cols-2 bg-slate-100 p-2 font-bold text-[10px] tracking-wider text-slate-500 uppercase">
-                                <div>Butiran Pegawai</div>
-                                <div className="text-right flex justify-end gap-1 items-center">Pilih / Status Pendaftaran</div>
-                              </div>
-                              <div className="divide-y divide-slate-100 max-h-[150px] overflow-y-auto w-full">
-                                {loggedInUsers.map((userObj: any) => {
-                                  const isRegistered = !!registeredEmails[userObj.email.toLowerCase()] || userObj.email.toLowerCase() === 'syahrulxy91@gmail.com';
-                                  return (
-                                    <div key={userObj.email} className="grid grid-cols-2 p-2 hover:bg-slate-50/60 items-center">
-                                      <div className="flex items-center gap-2">
-                                        {userObj.photoURL ? (
-                                          <img src={userObj.photoURL} alt="p" className="w-6 h-6 rounded-full" />
-                                        ) : (
-                                          <div className="w-6 h-6 bg-slate-200 text-slate-600 rounded-full flex items-center justify-center font-bold text-[10px]">{userObj.name ? userObj.name[0] : 'U'}</div>
-                                        )}
-                                        <div className="truncate">
-                                          <p className="font-bold text-slate-700 truncate">{userObj.name || 'User'}</p>
-                                          <p className="text-[10px] text-slate-400 select-all truncate">{userObj.email}</p>
-                                        </div>
-                                      </div>
-                                      <div className="flex flex-col items-end gap-1 justify-center">
-                                        <div className="flex gap-1.5 items-center">
-                                          {isRegistered ? (
-                                            <span className="text-[9px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-black border border-green-200 uppercase">Berdaftar</span>
-                                          ) : (
-                                            <span className="text-[9px] bg-red-50 text-red-700 px-1.5 py-0.5 rounded font-black border border-red-200 uppercase">Sekat (Belum Berdaftar)</span>
-                                          )}
-                                        </div>
-                                        <button
-                                          onClick={() => {
-                                            setNewEmail(userObj.email);
-                                          }}
-                                          className="text-[10px] text-[#1565C0] hover:underline font-semibold cursor-pointer"
-                                        >
-                                          Pilih E-mel Ini
-                                        </button>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* List of Registered Emails Table */}
-                        <div className="space-y-2">
-                          <h5 className="text-[11px] font-bold text-slate-700 tracking-wider uppercase">Senarai Email Berdaftar (Kebenaran Masuk):</h5>
-                          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                            <table className="w-full text-left border-collapse text-xs">
-                              <thead>
-                                <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
-                                  <th className="p-3">Alamat Email Berdaftar</th>
-                                  <th className="p-3">Status Sistem</th>
-                                  <th className="p-3">Tarikh Daftar</th>
-                                  <th className="p-3 text-right">Padam</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-100">
-                                {/* Primary Super Admin main listing */}
-                                <tr className="hover:bg-slate-50/50 bg-blue-50/20">
-                                  <td className="p-3 text-slate-800 font-bold select-all">syahrulxy91@gmail.com</td>
-                                  <td className="p-3">
-                                    <span className="bg-red-100 text-red-700 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-red-200">
-                                      SUPER ADMIN (UTAMA)
-                                    </span>
-                                  </td>
-                                  <td className="p-3 text-slate-400 italic">Sistem Utama (Kekal)</td>
-                                  <td className="p-3 text-right">
-                                    <span className="text-[10px] text-slate-400 font-semibold italic">Terkunci</span>
-                                  </td>
-                                </tr>
-
-                                {Object.keys(registeredEmails).map((emailKey) => (
-                                  <tr key={emailKey} className="hover:bg-slate-50">
-                                    <td className="p-3 text-slate-700 select-all font-medium">{emailKey}</td>
-                                    <td className="p-3">
-                                      <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-200">
-                                        PENGGUNA SAH
-                                      </span>
-                                    </td>
-                                    <td className="p-3 text-slate-500 font-medium text-xs">
-                                      {registeredEmails[emailKey].createdAt ? new Date(registeredEmails[emailKey].createdAt!).toLocaleDateString('ms-MY') : 'Sedia Ada'}
-                                    </td>
-                                    <td className="p-3 text-right">
-                                      <button
-                                        onClick={() => removeRegisteredEmail(emailKey)}
-                                        className="p-1 hover:bg-red-50 text-red-600 hover:text-red-700 rounded transition-colors cursor-pointer"
-                                        title="Buang kebenaran kemasukan email ini"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-
-                                {Object.keys(registeredEmails).length === 0 && (
-                                  <tr>
-                                    <td colSpan={4} className="p-6 text-center text-slate-400 italic">
-                                      Tiada email tambahan yang didaftarkan. Pengguna luar disekat secara lalai.
-                                    </td>
-                                  </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   {/* Modal Footer actions */}

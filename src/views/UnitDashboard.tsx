@@ -94,15 +94,13 @@ export default function UnitDashboard() {
           </p>
         </div>
         
-        {user?.role !== 'PEMERHATI' && (
-          <button 
-            onClick={() => setShowUpload(true)}
-            className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs sm:text-sm rounded-2xl flex items-center gap-2 shadow-lg shadow-indigo-600/15 border border-indigo-500 transition-all cursor-pointer hover:scale-[1.02]"
-          >
-            <Plus className="w-4.5 h-4.5" />
-            <span>Tambah Laporan Unit</span>
-          </button>
-        )}
+        <button 
+          onClick={() => setShowUpload(true)}
+          className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs sm:text-sm rounded-2xl flex items-center gap-2 shadow-lg shadow-indigo-600/15 border border-indigo-500 transition-all cursor-pointer hover:scale-[1.02]"
+        >
+          <Plus className="w-4.5 h-4.5" />
+          <span>Tambah Laporan Unit</span>
+        </button>
       </div>
 
       {/* Stats Redesign */}
