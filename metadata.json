@@ -1,0 +1,6 @@
+{
+  "name": "E-Laporan SPS",
+  "description": "Sistem pengurusan, penyimpanan, dan akses dokumen rasmi Sektor Pengurusan Sekolah secara sistematik dan selamat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

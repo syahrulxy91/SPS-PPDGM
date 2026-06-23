@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "googleDriveConfig": {
+      "title": "Google Drive Config",
+      "description": "Centralized system settings for Google Drive Integration",
+      "type": "object",
+      "properties": {
+        "googleDriveEnabled": {
+          "type": "boolean",
+          "description": "Whether Google Drive upload and storage are enabled"
+        },
+        "googleDriveRootFolderId": {
+          "type": "string",
+          "description": "The Google Drive Root (induk) Folder ID"
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "The email of the Super Admin who updated the settings"
+        }
+      },
+      "required": ["googleDriveEnabled", "googleDriveRootFolderId", "updatedBy"]
+    },
+    "organisasiNode": {
+      "title": "Organisasi Node",
+      "description": "Individual member node inside PPD Gua Musang structure",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "position": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "sortOrder": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["name", "position", "category", "sortOrder", "isActive", "updatedAt", "updatedBy"]
+    }
+  },
+  "firestore": {
+    "systemSettings/googleDriveConfig": {
+      "schema": "googleDriveConfig",
+      "description": "Main collection for Google Drive and overall system settings"
+    },
+    "organisasi/{nodeId}": {
+      "schema": "organisasiNode",
+      "description": "Organizational structure members (KPPD, Timbalan, Penolong Pegawai)"
+    }
+  }
+}

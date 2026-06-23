@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny Catch-all Gatekeeper
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Check if user is a dynamic Super Admin
+    function isSuperAdminUser() {
+      return request.auth != null && 
+        'email' in request.auth.token && (
+          request.auth.token.email.lower() == "syahrulxy91@gmail.com" ||
+          (exists(/databases/$(database)/documents/roleAssignments/$(request.auth.token.email.lower())) &&
+           get(/databases/$(database)/documents/roleAssignments/$(request.auth.token.email.lower())).data.role == "SUPER ADMIN")
+        );
+    }
+
+    // Rules for centralized system settings
+    match /systemSettings/{configId} {
+      allow read: if true; // Any logged-in as well as visitor can view config
+      allow write: if isSuperAdminUser();
+    }
+
+    // Rules for PPD Gua Musang Organizational Structure
+    match /organisasi/{nodeId} {
+      allow read: if true; // All authorized readers can view the structural design
+      allow write: if isSuperAdminUser();
+    }
+
+    // Rules for Role Assignments
+    match /roleAssignments/{email} {
+      allow read: if request.auth != null; // All authenticated users can read to fetch their role
+      allow write: if isSuperAdminUser();
+    }
+  }
+}
