@@ -2,36 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { 
   FileText, Users, Building, Activity, UploadCloud, ChevronRight, 
   Clock, LayoutGrid, Settings, HardDrive, Database, Shield, ShieldCheck, 
-  UserCheck, Plus, Trash2, ArrowRight, CheckCircle, RefreshCw, AlertCircle, Eye, Info, Server, Layers, HelpCircle, Search,
+  UserCheck, UserPlus, Plus, Trash2, ArrowRight, CheckCircle, RefreshCw, AlertCircle, Eye, Info, Server, Layers, HelpCircle, Search,
   Calendar, Check, CheckSquare, Sparkles, TrendingUp, Key, ArrowUpRight, FolderOpen
 } from 'lucide-react';
 import { readRows, initSheets } from '../lib/sheets';
 import { initDriveFolders, resetDriveFoldersCache } from '../lib/drive';
-import { getGoogleDriveConfigSync, saveGoogleDriveConfig, fetchGoogleDriveConfig } from '../lib/firebase';
+import { getGoogleDriveConfigSync, saveGoogleDriveConfig, fetchGoogleDriveConfig, db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Link } from 'react-router-dom';
 import { getCurrentAppUser } from '../lib/auth';
 import { getUnitDisplayName } from '../types';
-import { db } from '../lib/firebase';
-import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
 // Helper to prevent Firestore connection from hanging indefinitely on write if blocked/offline
-const withWriteTimeout = <T extends unknown>(promise: Promise<T>, timeoutMs: number = 3000): Promise<T> => {
+const withWriteTimeout = <T extends unknown>(promise: Promise<T>, timeoutMs: number = 8000): Promise<T> => {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      console.warn('SAMBUNGAN TERGENDALA: Menyimpan ke dalam storan peranti setempat dahulu untuk disegerakkan kemudian.');
-      resolve(null as any); // Resolve instead of rejecting, treating local-first save as a success
+      reject(new Error('TIMEOUT: Operasi mengambil masa terlalu lama. Sila semak sambungan internet.'));
     }, timeoutMs);
-
-    promise
-      .then((res) => {
-        clearTimeout(timer);
-        resolve(res);
-      })
-      .catch((err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
+    promise.then(
+      (result) => { clearTimeout(timer); resolve(result); },
+      (error) => { clearTimeout(timer); reject(error); }
+    );
   });
 };
 
@@ -83,21 +75,18 @@ export default function MainDashboard() {
       }
     }
     return {
-      'UNIT_SWASTA': 'UNIT_SWASTA',
+      'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
       'UNIT_RENDAH': 'UNIT_RENDAH',
       'UNIT_MENENGAH': 'UNIT_MENENGAH',
-      'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
-      'UNIT_PENDIDIKAN_KHAS': 'UNIT_PENDIDIKAN_KHAS',
-      'UNIT_HEM': 'UNIT_HEM',
-      'UNIT_KOKURIKULUM': 'UNIT_KOKURIKULUM',
-      'UNIT_SUKAN': 'UNIT_SUKAN',
+      'UNIT_SWASTA': 'UNIT_SWASTA',
+      'SIP': 'SIP',
       'RUJUKAN_BERSAMA': 'RUJUKAN_BERSAMA'
     };
   });
 
-  // Role management parameters
-  const [roleAssignments, setRoleAssignments] = useState<Record<string, { role: string; unit?: string }>>(() => {
-    const custom = localStorage.getItem('sps_role_assignments');
+  // Registered Emails management parameters
+  const [registeredEmails, setRegisteredEmails] = useState<Record<string, { email: string; createdAt?: string; createdBy?: string }>>(() => {
+    const custom = localStorage.getItem('sps_registered_emails');
     return custom ? JSON.parse(custom) : {};
   });
 
@@ -111,10 +100,8 @@ export default function MainDashboard() {
     return localStorage.getItem('sps_primary_file_source') || 'local_storage';
   });
 
-  // Role addition form parameters
+  // Registered Emails addition form parameters
   const [newEmail, setNewEmail] = useState('');
-  const [newRole, setNewRole] = useState('PEGAWAI');
-  const [newUnit, setNewUnit] = useState('');
 
   // Status indicators for saves
   const [driveSaveSuccess, setDriveSaveSuccess] = useState(false);
@@ -122,54 +109,26 @@ export default function MainDashboard() {
   const [roleSaveSuccess, setRoleSaveSuccess] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Sync roleAssignments from Firestore in real-time
+  // Sync registeredEmails from Firestore in real-time
   useEffect(() => {
-    const colRef = collection(db, 'roleAssignments');
+    const colRef = collection(db, 'registeredEmails');
     const unsubscribe = onSnapshot(colRef, (snap) => {
-      const assignments: Record<string, { role: string; unit?: string }> = {};
+      const emailList: Record<string, { email: string; createdAt?: string; createdBy?: string }> = {};
       snap.forEach((docSnap) => {
         const data = docSnap.data();
-        assignments[docSnap.id.toLowerCase()] = {
-          role: data.role,
-          ...(data.unit ? { unit: data.unit } : {})
+        emailList[docSnap.id.toLowerCase()] = {
+          email: data.email || docSnap.id,
+          createdAt: data.createdAt,
+          createdBy: data.createdBy
         };
       });
-      setRoleAssignments(assignments);
-      localStorage.setItem('sps_role_assignments', JSON.stringify(assignments));
-
-      // Re-apply roles to local loggedInUsers list automatically to stay in sync
-      const cachedUsersStr = localStorage.getItem('sps_logged_in_users');
-      if (cachedUsersStr) {
-        try {
-          const originalUsers = JSON.parse(cachedUsersStr);
-          const updatedUsers = originalUsers.map((u: any) => {
-            const emailLower = u.email.toLowerCase();
-
-            // Super admin sentiasa kekal
-            if (emailLower === 'syahrulxy91@gmail.com') {
-              return { ...u, role: 'SUPER ADMIN', unit: '' };
-            }
-
-            // Guna role dari Firestore kalau ada
-            if (assignments[emailLower]) {
-              return {
-                ...u,
-                role: assignments[emailLower].role,
-                unit: assignments[emailLower].unit || ''
-              };
-            }
-
-            // Kekalkan role sedia ada — jangan reset ke PEMERHATI
-            return u;
-          });
-          setLoggedInUsers(updatedUsers);
-          localStorage.setItem('sps_logged_in_users', JSON.stringify(updatedUsers));
-        } catch (e) {
-          console.warn(e);
-        }
-      }
+      setRegisteredEmails(emailList);
+      localStorage.setItem('sps_registered_emails', JSON.stringify(emailList));
     }, (err) => {
-      console.warn("Gagal mematangkan roleAssignments dari Firebase:", err);
+      console.warn("Gagal mematangkan registeredEmails dari Firebase:", err);
+      if (auth.currentUser) {
+        handleFirestoreError(err, OperationType.GET, 'registeredEmails');
+      }
     });
 
     return () => unsubscribe();
@@ -279,14 +238,11 @@ export default function MainDashboard() {
   const handleRestoreDriveDefaults = async () => {
     if (confirm('Adakah anda pasti mahu set semula nama direktori folder unit kepada tetapan asal laluan kilang?')) {
       const defaults = {
-        'UNIT_SWASTA': 'UNIT_SWASTA',
+        'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
         'UNIT_RENDAH': 'UNIT_RENDAH',
         'UNIT_MENENGAH': 'UNIT_MENENGAH',
-        'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
-        'UNIT_PENDIDIKAN_KHAS': 'UNIT_PENDIDIKAN_KHAS',
-        'UNIT_HEM': 'UNIT_HEM',
-        'UNIT_KOKURIKULUM': 'UNIT_KOKURIKULUM',
-        'UNIT_SUKAN': 'UNIT_SUKAN',
+        'UNIT_SWASTA': 'UNIT_SWASTA',
+        'SIP': 'SIP',
         'RUJUKAN_BERSAMA': 'RUJUKAN_BERSAMA'
       };
 
@@ -320,19 +276,49 @@ export default function MainDashboard() {
     setTimeout(() => setSourceSaveSuccess(false), 2000);
   };
 
-  // Add role
-  const handleAddRoleAssignment = async () => {
+  // Add registered email
+  const handleAddRegisteredEmail = async () => {
     const email = newEmail.trim().toLowerCase();
-    if (!email) return;
+    if (!email) {
+      alert("Sila masukkan email terlebih dahulu.");
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      alert("Format email tidak sah.");
+      return;
+    }
+
+    if (email === 'syahrulxy91@gmail.com') {
+      alert("Akaun Super Admin utama sentiasa berdaftar dan tidak boleh ditambah.");
+      return;
+    }
+
+    if (registeredEmails[email]) {
+      alert("Email ini sudah didaftarkan.");
+      return;
+    }
 
     const payload = {
-      role: newRole,
-      ...(newUnit ? { unit: newUnit } : {})
+      email,
+      createdAt: new Date().toISOString(),
+      createdBy: auth.currentUser?.email || 'syahrulxy91@gmail.com'
     };
 
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      console.error('Auth tidak aktif - auth.currentUser adalah null');
+      alert('Sesi log masuk tamat. Sila log keluar dan log masuk semula.');
+      return;
+    }
+
     try {
-      // Direct Firestore write with timeout safety
-      await withWriteTimeout(setDoc(doc(db, 'roleAssignments', email), payload), 3000);
+      // Force token refresh untuk pastikan token segar
+      await currentUser.getIdToken(true);
+
+      // Direct Firestore write with timeout safety (defaults to 8000ms)
+      await withWriteTimeout(setDoc(doc(db, 'registeredEmails', email), payload));
 
       setNewEmail('');
       setRoleSaveSuccess(true);
@@ -340,49 +326,52 @@ export default function MainDashboard() {
 
       // Optimistic/Immediate UI Fallbacks
       const updated = {
-        ...roleAssignments,
+        ...registeredEmails,
         [email]: payload
       };
-      localStorage.setItem('sps_role_assignments', JSON.stringify(updated));
-      setRoleAssignments(updated);
-
-      const updatedUsers = loggedInUsers.map((u: any) => {
-        if (u.email.toLowerCase() === email) {
-          return { ...u, role: newRole, unit: newUnit || '' };
-        }
-        return u;
-      });
-      localStorage.setItem('sps_logged_in_users', JSON.stringify(updatedUsers));
-      setLoggedInUsers(updatedUsers);
+      localStorage.setItem('sps_registered_emails', JSON.stringify(updated));
+      setRegisteredEmails(updated);
     } catch (err: any) {
-      console.error('Gagal mentatapkan peranan ke Firestore:', err);
-      alert('Gagal menyelaraskan peranan ke cloud. Sila periksa internet.');
+      console.error('Gagal mendaftar email ke Firestore:', err);
+      alert('Pendaftaran email gagal. Firestore menolak operasi. Sila semak sambungan atau log masuk semula.');
+      handleFirestoreError(err, OperationType.WRITE, 'registeredEmails/' + email);
     }
   };
 
-  // Delete role
-  const handleRemoveRoleAssignment = async (email: string) => {
+  // Delete registered email
+  const handleRemoveRegisteredEmail = async (email: string) => {
     const emailLower = email.toLowerCase();
+    if (emailLower === 'syahrulxy91@gmail.com') {
+      alert("Tidak boleh memadam akaun utama Super Admin.");
+      return;
+    }
+
+    if (!window.confirm(`Adakah anda pasti mahu memadam ${email} daripada senarai email berdaftar?`)) {
+      return;
+    }
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      console.error('Auth tidak aktif - auth.currentUser adalah null');
+      alert('Sesi log masuk tamat. Sila log keluar dan log masuk semula.');
+      return;
+    }
+
     try {
-      // Direct Firestore delete with timeout safety
-      await withWriteTimeout(deleteDoc(doc(db, 'roleAssignments', emailLower)), 3000);
+      // Force token refresh untuk pastikan token segar
+      await currentUser.getIdToken(true);
 
-      const updated = { ...roleAssignments };
+      // Direct Firestore delete with timeout safety (defaults to 8000ms)
+      await withWriteTimeout(deleteDoc(doc(db, 'registeredEmails', emailLower)));
+
+      const updated = { ...registeredEmails };
       delete updated[emailLower];
-      localStorage.setItem('sps_role_assignments', JSON.stringify(updated));
-      setRoleAssignments(updated);
-
-      const updatedUsers = loggedInUsers.map((u: any) => {
-        if (u.email.toLowerCase() === emailLower) {
-          return { ...u, role: 'PEMERHATI', unit: '' };
-        }
-        return u;
-      });
-      localStorage.setItem('sps_logged_in_users', JSON.stringify(updatedUsers));
-      setLoggedInUsers(updatedUsers);
+      localStorage.setItem('sps_registered_emails', JSON.stringify(updated));
+      setRegisteredEmails(updated);
     } catch (err: any) {
-      console.error('Gagal memadam peranan dari Firestore:', err);
-      alert('Gagal memadam peranan dari cloud.');
+      console.error('Gagal memadam email berdaftar dari Firestore:', err);
+      alert('Pemadaman email gagal. Firestore menolak operasi. Sila semak sambungan atau log masuk semula.');
+      handleFirestoreError(err, OperationType.DELETE, 'registeredEmails/' + emailLower);
     }
   };
 
@@ -521,31 +510,31 @@ export default function MainDashboard() {
 
       {/* Tabs Navigation Section Redesign */}
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden hover:border-indigo-500/20 transition-all">
-        <div className="flex border-b border-slate-100 bg-slate-50/50 p-1">
+        <div className="flex border-b border-slate-100 bg-slate-50/50 p-1.5 gap-1.5">
           <button
             onClick={() => setActiveTab('struktur')}
-            className={`flex items-center gap-2.5 px-6 py-4 text-xs font-bold transition-all relative rounded-2xl flex-1 justify-center ${
+            className={`flex items-center gap-2.5 px-6 py-4.5 text-xs sm:text-sm transition-all relative rounded-2xl flex-1 justify-center ${
               activeTab === 'struktur' 
-                ? 'text-indigo-600 bg-white shadow-xs font-black' 
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'text-indigo-600 bg-white shadow-sm font-bold' 
+                : 'text-slate-500 hover:text-slate-800 font-medium'
             }`}
           >
-            <LayoutGrid className="w-4 h-4 shrink-0" />
+            <LayoutGrid className="w-4.5 h-4.5 shrink-0 text-indigo-500" />
             Struktur Unit Sektor Pengurusan Sekolah
           </button>
           <button
             onClick={() => setActiveTab('log')}
-            className={`flex items-center gap-2.5 px-6 py-4 text-xs font-bold transition-all relative rounded-2xl flex-1 justify-center ${
+            className={`flex items-center gap-2.5 px-6 py-4.5 text-xs sm:text-sm transition-all relative rounded-2xl flex-1 justify-center ${
               activeTab === 'log' 
-                ? 'text-indigo-600 bg-white shadow-xs font-black' 
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'text-indigo-600 bg-white shadow-sm font-bold' 
+                : 'text-slate-500 hover:text-slate-800 font-medium'
             }`}
           >
-            <Clock className="w-4 h-4 shrink-0" />
+            <Clock className="w-4.5 h-4.5 shrink-0 text-indigo-500" />
             Log Aktiviti Sektor Gua Musang
-            <span className="relative flex h-2 w-2 ml-1">
+            <span className="relative flex h-2.5 w-2.5 ml-1">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             </span>
           </button>
         </div>
@@ -561,19 +550,16 @@ export default function MainDashboard() {
                   </h3>
                   <p className="text-xs text-slate-400">Sila klik mana-mana unit di bawah untuk terus mengakses seksyen laporan unit tersebut.</p>
                 </div>
-                <span className="text-[9px] bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg font-black border border-slate-200">8 UNIT UTAMA</span>
+                <span className="text-[9px] bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg font-black border border-slate-200">5 UNIT UTAMA</span>
               </div>
               
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 {[
-                  { name: 'Unit Swasta', path: 'unit-swasta', desc: 'Pengurusan operasi sekolah swasta, pendaftaran & pelaporan.', code: 'US' },
+                  { name: 'Unit Prasekolah', path: 'unit-prasekolah', desc: 'Pengurusan kebajikan & aktiviti tahunan prasekolah.', code: 'UP' },
                   { name: 'Unit Rendah', path: 'unit-rendah', desc: 'Akademik, penempatan murid & bantuan sekolah rendah.', code: 'UR' },
                   { name: 'Unit Menengah & Tingkatan 6', path: 'unit-menengah', desc: 'Akademik, penempatan murid & bantuan sekolah menengah serta tingkatan 6.', code: 'UM' },
-                  { name: 'Unit Prasekolah', path: 'unit-prasekolah', desc: 'Pengurusan kebajikan & aktiviti tahunan prasekolah.', code: 'UP' },
-                  { name: 'Unit Pendidikan Khas', path: 'unit-pendidikan-khas', desc: 'Program pendidikan khas integrasi (PPKI) & laporan.', code: 'UK' },
-                  { name: 'Unit HEM', path: 'unit-hem', desc: 'Kebajikan murid, biasiswa, disiplin & kaunseling.', code: 'UH' },
-                  { name: 'Unit Peperiksaan', path: 'unit-kokurikulum', desc: 'Pengurusan operasi peperiksaan, pentaksiran & slip peperiksaan.', code: 'UPe' },
-                  { name: 'SIP+', path: 'unit-sukan', desc: 'Sokongan Instruksional Pemimpin Sekolah (SIP+) Gua Musang.', code: 'SIP' }
+                  { name: 'Unit Swasta', path: 'unit-swasta', desc: 'Pengurusan operasi sekolah swasta, pendaftaran & pelaporan.', code: 'US' },
+                  { name: 'SIP+', path: 'sip', desc: 'Sokongan Instruksional Pemimpin Sekolah (SIP+) Gua Musang.', code: 'SIP' }
                 ].map((unit, i) => (
                   <Link 
                     key={unit.path} 
@@ -709,20 +695,20 @@ export default function MainDashboard() {
       </div>
 
       {/* Admin Modules Navigation */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/50">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/50">
         {[
-          { id: 'status', label: 'Monitor & Status', icon: <Layers className="w-4 h-4" /> },
-          { id: 'drive', label: 'Struktur Google Drive', icon: <HardDrive className="w-4 h-4" /> },
-          { id: 'source', label: 'Punca Storan Fail', icon: <Server className="w-4 h-4" /> },
-          { id: 'roles', label: 'Hak Akses Peranan', icon: <UserCheck className="w-4 h-4" /> }
+          { id: 'status', label: 'Monitor & Status', icon: <Layers className="w-4.5 h-4.5" /> },
+          { id: 'drive', label: 'Struktur Google Drive', icon: <HardDrive className="w-4.5 h-4.5" /> },
+          { id: 'source', label: 'Punca Storan Fail', icon: <Server className="w-4.5 h-4.5" /> },
+          { id: 'roles', label: 'Email User Berdaftar', icon: <UserCheck className="w-4.5 h-4.5" /> }
         ].map((btn) => (
           <button
             key={btn.id}
             onClick={() => setAdminSectionTab(btn.id as any)}
-            className={`py-3 px-4 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            className={`py-3.5 px-5.5 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2.5 transition-all cursor-pointer ${
               adminSectionTab === btn.id 
-                ? 'bg-[#0A192F] text-white shadow-md shadow-[#0A192F]/15 border border-[#1B2C4E]' 
-                : 'text-slate-500 hover:bg-slate-200/60 hover:text-slate-800'
+                ? 'bg-[#0A192F] text-white shadow-md shadow-[#0A192F]/15 border border-[#1B2C4E] font-bold' 
+                : 'text-slate-500 hover:bg-slate-200/60 hover:text-slate-800 font-medium'
             }`}
           >
             {btn.icon}
@@ -857,14 +843,11 @@ export default function MainDashboard() {
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[
-                    { label: 'Unit Swasta', key: 'UNIT_SWASTA' },
+                    { label: 'Unit Prasekolah', key: 'UNIT_PRASEKOLAH' },
                     { label: 'Unit Rendah', key: 'UNIT_RENDAH' },
                     { label: 'Unit Menengah & Tingkatan 6', key: 'UNIT_MENENGAH' },
-                    { label: 'Unit Prasekolah', key: 'UNIT_PRASEKOLAH' },
-                    { label: 'Unit Pendidikan Khas', key: 'UNIT_PENDIDIKAN_KHAS' },
-                    { label: 'Unit Hal Ehwal Murid (HEM)', key: 'UNIT_HEM' },
-                    { label: 'Unit Peperiksaan', key: 'UNIT_KOKURIKULUM' },
-                    { label: 'SIP+', key: 'UNIT_SUKAN' },
+                    { label: 'Unit Swasta', key: 'UNIT_SWASTA' },
+                    { label: 'SIP+', key: 'SIP' },
                     { label: 'Bahan Rujukan Bersama', key: 'RUJUKAN_BERSAMA' }
                   ].map((u) => (
                     <div key={u.key} className="space-y-1.5 p-4 bg-slate-50/70 border border-slate-100 rounded-2xl hover:border-indigo-500/10 transition-colors">
@@ -979,7 +962,7 @@ export default function MainDashboard() {
           </div>
         )}
 
-        {/* MODULE 4: USER ROLE CONFIGURATION AND PERMISSION ASSIGNMENT */}
+        {/* MODULE 4: REGISTERED USER EMAILS ONLY */}
         {adminSectionTab === 'roles' && (
           <div className="space-y-7 animate-in fade-in duration-300">
             <div className="bg-rose-50/80 border border-rose-100 text-[#0f2d52] p-5 rounded-2xl text-xs space-y-2 flex items-start gap-3.5">
@@ -987,9 +970,9 @@ export default function MainDashboard() {
                 <ShieldCheck className="w-5 h-5 text-rose-700 shrink-0" />
               </div>
               <div>
-                <p className="font-extrabold text-rose-950 text-sm">Pentadbiran Peranan &amp; Hak Akses Kakitangan</p>
+                <p className="font-extrabold text-rose-950 text-sm">Sistem Kebenaran Kemasukan E-mel Berdaftar</p>
                 <p className="text-slate-500 leading-relaxed font-semibold">
-                  Tentukan kuasa login bagi setiap akaun e-mel PPD Gua Musang yang diimbas dari sistem pelayan. Peranan Super Admin mempunyai kuasa penuh konfigurasi, Pegawai berhak memuat naik di unit masing-masing, manakala Pemerhati hanya diberikan akses tontonan sahaja.
+                  Akses log masuk kini dikawal sepenuhnya menggunakan senarai email berdaftar. Hanya alamat email yang tersenarai secara rasmi di bawah sahaja dibenarkan log masuk ke dalam Dashboard. Pengguna tidak berdaftar akan disekat serta-merta.
                 </p>
               </div>
             </div>
@@ -999,68 +982,33 @@ export default function MainDashboard() {
               {/* Add form card */}
               <div id="add-role-panel" className="bg-slate-50 border border-slate-200/50 p-6 rounded-3xl space-y-4">
                 <h4 className="text-xs font-black text-[#0A192F] uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-200/50">
-                  <Plus className="w-4 h-4 text-indigo-500" />
-                  Tetapkan Hak Akses Baharu
+                  <Plus className="w-4 h-4 text-[#1565C0]" />
+                  Daftarkan Alamat E-mel Baru
                 </h4>
 
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Alamat E-mel Kakitangan (Google):</label>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Alamat E-mel Google/Gmail:</label>
                   <input
                     type="email"
                     placeholder="example@gmail.com"
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold outline-none focus:border-indigo-500 transition-all text-slate-800"
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold outline-none focus:border-[#1565C0] transition-all text-slate-800"
                   />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Grup Peranan Hak (Security Role):</label>
-                  <select
-                    value={newRole}
-                    onChange={(e) => setNewRole(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold outline-none focus:border-indigo-500 text-slate-800"
-                  >
-                    <option value="SUPER ADMIN">SUPER ADMIN</option>
-                    <option value="ADMIN SPS">ADMIN SPS</option>
-                    <option value="KETUA UNIT">KETUA UNIT</option>
-                    <option value="PEGAWAI">PEGAWAI UNIT</option>
-                    <option value="PEMERHATI">PEMERHATI (READ ONLY)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Unit Penyerah (Sekiranya Berkenaan):</label>
-                  <select
-                    value={newUnit}
-                    onChange={(e) => setNewUnit(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold outline-none focus:border-indigo-500 text-slate-800"
-                  >
-                    <option value="">Semua Sektor (Standard)</option>
-                    <option value="ADMIN SPS">ADMIN SPS (Semua Unit)</option>
-                    <option value="UNIT_SWASTA">UNIT SWASTA</option>
-                    <option value="UNIT_RENDAH">UNIT RENDAH</option>
-                    <option value="UNIT_MENENGAH">UNIT MENENGAH &amp; TINGKATAN 6</option>
-                    <option value="UNIT_PRASEKOLAH">UNIT PRASEKOLAH</option>
-                    <option value="UNIT_PENDIDIKAN_KHAS">UNIT PENDIDIKAN KHAS</option>
-                    <option value="UNIT_HEM">UNIT HEM</option>
-                    <option value="UNIT_KOKURIKULUM">UNIT PEPERIKSAAN</option>
-                    <option value="UNIT_SUKAN">SIP+</option>
-                  </select>
                 </div>
 
                 {roleSaveSuccess && (
                   <p className="text-[10px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md font-bold text-center border border-emerald-200 animate-pulse">
-                    Ahli berjaya diselaraskan ke Firestore!
+                    ✓ Alamat email berjaya didaftarkan ke dalam sistem.
                   </p>
                 )}
 
                 <button
-                  onClick={handleAddRoleAssignment}
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md shadow-indigo-600/10 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  onClick={handleAddRegisteredEmail}
+                  className="w-full py-2.5 bg-[#1565C0] hover:bg-[#0F2D52] text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-[#1b2f4a]"
                 >
-                  <UserCheck className="w-4 h-4 shrink-0" />
-                  Hubung Kakitangan
+                  <UserPlus className="w-4 h-4 shrink-0" />
+                  Daftar Email
                 </button>
               </div>
 
@@ -1069,7 +1017,7 @@ export default function MainDashboard() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                   <h4 className="text-xs font-black text-[#0A192F] uppercase tracking-wider block flex items-center gap-2">
                     <Users className="w-4 h-4 text-indigo-500" />
-                    Kakitangan Bersistem ({Object.keys(roleAssignments).length + filteredUsers.length} Orang)
+                    Senarai Email Berdaftar (Kebenaran Masuk)
                   </h4>
                   <div className="relative w-full sm:w-56 shrink-0">
                     <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
@@ -1091,61 +1039,40 @@ export default function MainDashboard() {
                       <div className="w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">SA</div>
                       <div className="truncate">
                         <p className="font-bold text-slate-700 truncate text-[11px] leading-tight">Pengasas Utama (Sistem)</p>
-                        <p className="text-[10px] text-slate-400 font-mono truncate">syahrulxy91@gmail.com</p>
+                        <p className="text-[10px] text-slate-400 font-mono truncate select-all">syahrulxy91@gmail.com</p>
                       </div>
                     </div>
                     <div className="col-span-4 sm:col-span-4 flex justify-center gap-1">
-                      <span className="text-[9px] bg-red-50 text-red-600 font-black px-1.5 py-0.5 rounded-md border border-red-200 uppercase">SUPER ADMIN</span>
+                      <span className="text-[9px] bg-red-50 text-red-600 font-black px-1.5 py-0.5 rounded-md border border-red-200 uppercase">SUPER ADMIN (UTAMA)</span>
                     </div>
-                    <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 font-mono text-[9px] text-slate-400 font-bold pr-1">
-                      Sistem Asal
+                    <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 font-mono text-[9px] text-slate-400 font-bold pr-3">
+                      Kekal
                     </div>
                   </div>
 
                   {/* Other assignments listed in real-time */}
-                  {Object.keys(roleAssignments).map((emailKey) => {
+                  {Object.keys(registeredEmails).map((emailKey) => {
                     if (emailKey.toLowerCase() === 'syahrulxy91@gmail.com') return null;
-                    const assign = roleAssignments[emailKey];
+                    if (searchQuery && !emailKey.toLowerCase().includes(searchQuery.toLowerCase())) return null;
+                    const data = registeredEmails[emailKey];
                     return (
                       <div key={emailKey} className="grid grid-cols-12 p-3 items-center hover:bg-slate-50/50">
                         <div className="col-span-8 sm:col-span-6 flex items-center gap-2">
                           <div className="w-6 h-6 bg-slate-100 text-slate-600 rounded-xl flex items-center justify-center font-extrabold text-[10px] shrink-0 font-mono">{emailKey[0].toUpperCase()}</div>
                           <div className="truncate">
-                            <p className="text-[11px] font-bold text-slate-700 truncate">{emailKey}</p>
-                            <p className="text-[9px] text-slate-400 truncate flex items-center gap-1">Hubungan Disandarkan</p>
+                            <p className="text-[11px] font-bold text-slate-700 truncate select-all">{emailKey}</p>
+                            <p className="text-[9px] text-slate-400 truncate flex items-center gap-1">
+                              Daftar: {data.createdAt ? new Date(data.createdAt).toLocaleDateString('ms-MY') : 'Tiada Tarikh'}
+                            </p>
                           </div>
                         </div>
                         <div className="col-span-4 sm:col-span-4 flex flex-wrap justify-center gap-1">
-                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${
-                            assign.role === 'SUPER ADMIN' 
-                              ? 'bg-red-50 text-red-600 border border-red-100' 
-                              : assign.role === 'PEGAWAI' 
-                                ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' 
-                                : 'bg-slate-100 text-slate-500'
-                          }`}>
-                            {assign.role === 'PEGAWAI' ? 'PEGAWAI' : assign.role}
-                          </span>
-                          {assign.unit && (
-                            <span className="text-[9px] bg-blue-50 text-indigo-600 border border-blue-100 font-bold px-1.5 py-0.5 rounded-md truncate max-w-[120px]" title={getUnitDisplayName(assign.unit)}>
-                              {getUnitDisplayName(assign.unit).replace('Unit ', '')}
-                            </span>
-                          )}
+                          <span className="text-[9px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded-md border border-green-200 uppercase">PENGGUNA SAH</span>
                         </div>
-                        <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 my-1 sm:my-0">
+                        <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 my-1 sm:my-0 pr-2">
                           <button
-                            onClick={() => {
-                              setNewEmail(emailKey);
-                              setNewRole(assign.role);
-                              setNewUnit(assign.unit || '');
-                            }}
-                            className="p-1 px-2 text-[#0f2d52] hover:text-indigo-600 bg-white border border-slate-200 hover:border-indigo-200 rounded-lg text-[9px] font-extrabold"
-                            title="Edit"
-                          >
-                            Ubah
-                          </button>
-                          <button
-                            onClick={() => handleRemoveRoleAssignment(emailKey)}
-                            className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg"
+                            onClick={() => handleRemoveRegisteredEmail(emailKey)}
+                            className="p-1 px-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg flex items-center gap-1"
                             title="Padam"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1155,10 +1082,10 @@ export default function MainDashboard() {
                     );
                   })}
 
-                  {/* Logged In list if they have signed-in but no override explicitly shown */}
+                  {/* Logged In list showing who is registered / who is blocked */}
                   {filteredUsers.map((userObj: any) => {
                     const lowerEmail = userObj.email.toLowerCase();
-                    if (roleAssignments[lowerEmail] || lowerEmail === 'syahrulxy91@gmail.com') return null;
+                    if (registeredEmails[lowerEmail] || lowerEmail === 'syahrulxy91@gmail.com') return null;
                     return (
                       <div key={userObj.uid || userObj.email} className="grid grid-cols-12 p-3 items-center hover:bg-slate-50/50">
                         <div className="col-span-8 sm:col-span-6 flex items-center gap-2">
@@ -1168,24 +1095,21 @@ export default function MainDashboard() {
                             <div className="w-6 h-6 bg-slate-200 text-slate-600 rounded-xl flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">{userObj.name?.[0] || 'U'}</div>
                           )}
                           <div className="truncate">
-                            <p className="font-bold text-slate-700 truncate text-[11px] leading-tight">{userObj.name}</p>
+                            <p className="font-bold text-slate-700 truncate text-[11px] leading-tight">{userObj.name || 'User'}</p>
                             <p className="text-[10px] text-slate-400 font-mono truncate select-all">{lowerEmail}</p>
                           </div>
                         </div>
                         <div className="col-span-4 sm:col-span-4 flex justify-center gap-1">
-                          <span className="text-[9px] bg-slate-100 text-slate-500 font-extrabold px-1.5 py-0.5 rounded uppercase">PEMERHATI</span>
-                          <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded border border-amber-200 font-extrabold tracking-tight">Auto-Auth</span>
+                          <span className="text-[9px] bg-red-50 text-red-600 font-extrabold px-1.5 py-0.5 rounded border border-red-200 uppercase">BELUM BERDAFTAR</span>
                         </div>
-                        <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 mt-2 sm:mt-0">
+                        <div className="col-span-12 sm:col-span-2 flex justify-end gap-1 mt-2 sm:mt-0 pr-2">
                           <button
                             onClick={() => {
                               setNewEmail(lowerEmail);
-                              setNewRole('PEGAWAI');
-                              setNewUnit('');
                             }}
                             className="px-2 py-1 text-emerald-600 hover:text-emerald-700 bg-white border border-slate-200 hover:border-emerald-200 rounded-lg text-[10px] font-extrabold"
                           >
-                            Set Peranan
+                            Pilih E-mel
                           </button>
                         </div>
                       </div>
@@ -1223,18 +1147,18 @@ function KPIBox({ title, value, icon, trend, color }: KPIBoxProps) {
   const choice = colorMap[color] || colorMap.indigo;
 
   return (
-    <div className={`bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between hover:scale-[1.01] hover:shadow-md transition-all ${choice.border}`}>
-      <div className="flex items-center justify-between mb-4">
-        <div className={`p-2.5 ${choice.bg} rounded-2xl flex items-center justify-center`}>
+    <div className={`bg-white p-7 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center hover:scale-[1.01] hover:shadow-md transition-all text-center ${choice.border}`}>
+      <div className="flex flex-col items-center gap-3 w-full mb-4">
+        <div className={`p-3.5 ${choice.bg} rounded-2xl flex items-center justify-center shrink-0`}>
           {icon}
         </div>
-        <span className={`text-[10px] font-bold ${choice.trend} bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-100`}>
+        <span className={`text-xs font-semibold ${choice.trend} bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100`}>
           {trend}
         </span>
       </div>
       <div>
-        <h3 className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-1.5">{title}</h3>
-        <p className="text-3xl font-black text-slate-800 tracking-tight leading-none">{value}</p>
+        <h3 className="text-xs sm:text-sm text-slate-400 font-medium uppercase tracking-widest leading-normal mb-2">{title}</h3>
+        <p className="text-4xl font-black text-slate-800 tracking-tight leading-none">{value}</p>
       </div>
     </div>
   );

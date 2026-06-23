@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { googleSignIn, getCurrentAppUser, logout } from '../lib/auth';
 import { resetDriveFoldersCache } from '../lib/drive';
-import { getGoogleDriveConfigSync, saveGoogleDriveConfig, fetchGoogleDriveConfig, db } from '../lib/firebase';
+import { getGoogleDriveConfigSync, saveGoogleDriveConfig, fetchGoogleDriveConfig, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -71,21 +71,18 @@ export default function LandingPage() {
       }
     }
     return {
-      'UNIT_SWASTA': 'UNIT_SWASTA',
+      'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
       'UNIT_RENDAH': 'UNIT_RENDAH',
       'UNIT_MENENGAH': 'UNIT_MENENGAH',
-      'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
-      'UNIT_PENDIDIKAN_KHAS': 'UNIT_PENDIDIKAN_KHAS',
-      'UNIT_HEM': 'UNIT_HEM',
-      'UNIT_KOKURIKULUM': 'UNIT_KOKURIKULUM',
-      'UNIT_SUKAN': 'UNIT_SUKAN',
+      'UNIT_SWASTA': 'UNIT_SWASTA',
+      'SIP': 'SIP',
       'RUJUKAN_BERSAMA': 'RUJUKAN_BERSAMA'
     };
   });
 
-  // User Roles states from localStorage
-  const [roleAssignments, setRoleAssignments] = useState<Record<string, { role: string; unit?: string }>>(() => {
-    const custom = localStorage.getItem('sps_role_assignments');
+  // Registered Emails states
+  const [registeredEmails, setRegisteredEmails] = useState<Record<string, { email: string; createdAt?: string; createdBy?: string }>>(() => {
+    const custom = localStorage.getItem('sps_registered_emails');
     return custom ? JSON.parse(custom) : {};
   });
 
@@ -94,10 +91,8 @@ export default function LandingPage() {
     return custom ? JSON.parse(custom) : [];
   });
 
-  // Role addition form states
+  // Registered Emails addition form states
   const [newEmail, setNewEmail] = useState('');
-  const [newRole, setNewRole] = useState('PEGAWAI');
-  const [newUnit, setNewUnit] = useState('');
 
   // Status flags
   const [driveSaveSuccess, setDriveSaveSuccess] = useState(false);
@@ -105,48 +100,27 @@ export default function LandingPage() {
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
 
-  // Sync roleAssignments from Firestore in real-time
+  // Sync registeredEmails from Firestore in real-time
   useEffect(() => {
-    const colRef = collection(db, 'roleAssignments');
+    const colRef = collection(db, 'registeredEmails');
     const unsubscribe = onSnapshot(colRef, (snap) => {
-      const assignments: Record<string, { role: string; unit?: string }> = {};
+      const emailList: Record<string, { email: string; createdAt?: string; createdBy?: string }> = {};
       snap.forEach((docSnap) => {
         const data = docSnap.data();
-        assignments[docSnap.id.toLowerCase()] = {
-          role: data.role,
-          ...(data.unit ? { unit: data.unit } : {})
+        emailList[docSnap.id.toLowerCase()] = {
+          email: data.email || docSnap.id,
+          createdAt: data.createdAt,
+          createdBy: data.createdBy
         };
       });
-      setRoleAssignments(assignments);
-      localStorage.setItem('sps_role_assignments', JSON.stringify(assignments));
-
-      // Re-apply roles to local loggedInUsers list automatically to stay in sync
-      const cachedUsersStr = localStorage.getItem('sps_logged_in_users');
-      if (cachedUsersStr) {
-        try {
-          const originalUsers = JSON.parse(cachedUsersStr);
-          const updatedUsers = originalUsers.map((u: any) => {
-            const emailLower = u.email.toLowerCase();
-            if (assignments[emailLower]) {
-              return { 
-                ...u, 
-                role: assignments[emailLower].role, 
-                unit: assignments[emailLower].unit || '' 
-              };
-            }
-            // syahrulxy91@gmail.com is always Super Admin
-            if (emailLower === 'syahrulxy91@gmail.com') {
-              return { ...u, role: 'SUPER ADMIN', unit: '' };
-            }
-            return { ...u, role: 'PEMERHATI', unit: '' };
-          });
-          setLoggedInUsers(updatedUsers);
-        } catch (e) {
-          console.warn(e);
-        }
-      }
+      setRegisteredEmails(emailList);
+      localStorage.setItem('sps_registered_emails', JSON.stringify(emailList));
     }, (err) => {
-      console.warn("Gagal memuatkan role assignments secara masa-nyata dari Firestore:", err);
+      console.warn("Gagal memuatkan senarai email berdaftar secara masa-nyata dari Firestore:", err);
+      const cached = sessionStorage.getItem('sps_auth_user');
+      if (cached) {
+        handleFirestoreError(err, OperationType.GET, 'registeredEmails');
+      }
     });
 
     return () => unsubscribe();
@@ -162,7 +136,11 @@ export default function LandingPage() {
       }
     } catch (e: any) {
       console.error(e);
-      setAuthError(e?.message || String(e));
+      if (e?.message === 'NOT_REGISTERED') {
+        alert('Email ini tidak berdaftar. Sila rujuk admin halaman.');
+      } else {
+        setAuthError(e?.message || String(e));
+      }
     }
   };
 
@@ -214,68 +192,76 @@ export default function LandingPage() {
     }
   };
 
-  const addRoleAssignment = async (emailToAssign?: string) => {
+  const addRegisteredEmail = async (emailToAssign?: string) => {
     const email = (emailToAssign || newEmail).trim().toLowerCase();
-    if (!email) return;
+    if (!email) {
+      alert("Sila masukkan email terlebih dahulu.");
+      return;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      alert("Format email tidak sah.");
+      return;
+    }
+
+    if (email === 'syahrulxy91@gmail.com') {
+      alert("Akaun Super Admin utama sentiasa berdaftar dan tidak boleh ditambah.");
+      return;
+    }
+
+    if (registeredEmails[email]) {
+      alert("Email ini sudah didaftarkan.");
+      return;
+    }
 
     const payload = {
-      role: newRole,
-      ...(newUnit ? { unit: newUnit } : {})
+      email,
+      createdAt: new Date().toISOString(),
+      createdBy: sessionUser?.email || 'syahrulxy91@gmail.com'
     };
 
     try {
-      // Direct Firestore write with timeout safety
-      await withWriteTimeout(setDoc(doc(db, 'roleAssignments', email), payload), 3000);
+      await withWriteTimeout(setDoc(doc(db, 'registeredEmails', email), payload), 3000);
 
       setNewEmail('');
       setRoleSaveSuccess(true);
       setTimeout(() => setRoleSaveSuccess(false), 2500);
 
       const updated = {
-        ...roleAssignments,
+        ...registeredEmails,
         [email]: payload
       };
-      localStorage.setItem('sps_role_assignments', JSON.stringify(updated));
-      setRoleAssignments(updated);
-
-      // Update logged-in list too
-      const updatedUsers = loggedInUsers.map((u: any) => {
-        if (u.email.toLowerCase() === email) {
-          return { ...u, role: newRole, unit: newUnit || '' };
-        }
-        return u;
-      });
-      localStorage.setItem('sps_logged_in_users', JSON.stringify(updatedUsers));
-      setLoggedInUsers(updatedUsers);
+      localStorage.setItem('sps_registered_emails', JSON.stringify(updated));
+      setRegisteredEmails(updated);
     } catch (e: any) {
-      console.error('Gagal mentatapkan peranan di LandingPage:', e);
-      alert('Gagal menyelaraskan peranan ke cloud. Sila periksa internet dan pastikan akaun anda mempunyai kuasa Super Admin.');
+      console.error('Gagal mendaftar email baru:', e);
+      alert('Gagal mendaftar email ke cloud. Sila periksa internet dan pastikan akaun anda mempunyai kuasa Super Admin.');
+      handleFirestoreError(e, OperationType.WRITE, 'registeredEmails/' + email);
     }
   };
 
-  const removeRoleAssignment = async (email: string) => {
+  const removeRegisteredEmail = async (email: string) => {
     const emailLower = email.toLowerCase();
+    if (emailLower === 'syahrulxy91@gmail.com') {
+      alert("Tidak boleh memadam akaun utama Super Admin.");
+      return;
+    }
+    if (!window.confirm(`Adakah anda pasti mahu memadam ${email} daripada senarai email berdaftar?`)) {
+      return;
+    }
     try {
-      // Direct Firestore delete with timeout safety
-      await withWriteTimeout(deleteDoc(doc(db, 'roleAssignments', emailLower)), 3000);
+      await withWriteTimeout(deleteDoc(doc(db, 'registeredEmails', emailLower)), 3000);
 
-      const updated = { ...roleAssignments };
+      const updated = { ...registeredEmails };
       delete updated[emailLower];
-      localStorage.setItem('sps_role_assignments', JSON.stringify(updated));
-      setRoleAssignments(updated);
-
-      // Reset status in logged in user list
-      const updatedUsers = loggedInUsers.map((u: any) => {
-        if (u.email.toLowerCase() === emailLower) {
-          return { ...u, role: 'PEMERHATI', unit: '' };
-        }
-        return u;
-      });
-      localStorage.setItem('sps_logged_in_users', JSON.stringify(updatedUsers));
-      setLoggedInUsers(updatedUsers);
+      localStorage.setItem('sps_registered_emails', JSON.stringify(updated));
+      setRegisteredEmails(updated);
     } catch (e: any) {
-      console.error('Gagal memadam peranan di LandingPage:', e);
-      alert('Gagal memadam peranan dari cloud.');
+      console.error('Gagal memadam email berdaftar:', e);
+      alert('Gagal memadam email dari cloud.');
+      handleFirestoreError(e, OperationType.DELETE, 'registeredEmails/' + emailLower);
     }
   };
 
@@ -300,7 +286,7 @@ export default function LandingPage() {
           <img 
             src="/icons/android-chrome-192x192.png" 
             alt="Logo SPS" 
-            className="w-10 h-10 object-contain rounded-lg border border-slate-200 shadow-sm" 
+            className="w-14 h-14 object-contain" 
           />
           <div>
             <h1 className="text-[#0F2D52] font-bold text-lg leading-tight tracking-tight">E -LAPORAN SPS</h1>
@@ -328,9 +314,11 @@ export default function LandingPage() {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5 }}
         >
-          <div className="w-16 h-16 bg-[#0F2D52] rounded-2xl flex items-center justify-center text-white font-extrabold text-3xl shadow-md border border-slate-700">
-            S
-          </div>
+          <img 
+            src="/icons/android-chrome-512x512.png" 
+            alt="Logo SPS" 
+            className="w-32 h-32 object-contain" 
+          />
 
           <div className="space-y-2">
             <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0F2D52] leading-tight tracking-tight">
@@ -564,7 +552,7 @@ export default function LandingPage() {
                       }`}
                     >
                       <UserPlus className="w-4 h-4" />
-                      Penetapan Peranan Pegawai ({Object.keys(roleAssignments).length + 1})
+                      Email User Berdaftar ({Object.keys(registeredEmails).length + 1})
                     </button>
                   </div>
 
@@ -624,14 +612,11 @@ export default function LandingPage() {
                           <h5 className="text-xs font-bold text-[#0F2D52] uppercase tracking-wider mb-2">Pautan Nama Folder Bagi Setiap Unit:</h5>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             {[
-                              { label: 'Unit Swasta', key: 'UNIT_SWASTA' },
+                              { label: 'Unit Prasekolah', key: 'UNIT_PRASEKOLAH' },
                               { label: 'Unit Rendah', key: 'UNIT_RENDAH' },
                               { label: 'Unit Menengah & Tingkatan 6', key: 'UNIT_MENENGAH' },
-                              { label: 'Unit Prasekolah', key: 'UNIT_PRASEKOLAH' },
-                              { label: 'Unit Pendidikan Khas', key: 'UNIT_PENDIDIKAN_KHAS' },
-                              { label: 'Unit Hal Ehwal Murid (HEM)', key: 'UNIT_HEM' },
-                              { label: 'Unit Peperiksaan', key: 'UNIT_KOKURIKULUM' },
-                              { label: 'SIP+', key: 'UNIT_SUKAN' },
+                              { label: 'Unit Swasta', key: 'UNIT_SWASTA' },
+                              { label: 'SIP+', key: 'SIP' },
                               { label: 'Bahan Rujukan Bersama', key: 'RUJUKAN_BERSAMA' }
                             ].map((unitItem) => (
                               <div key={unitItem.key} className="space-y-1">
@@ -671,75 +656,45 @@ export default function LandingPage() {
                         </div>
                       </div>
                     ) : (
-                      /* TAB 2: User Roles Assignment UI */
+                      /* TAB 2: Registered User Emails UI */
                       <div className="space-y-6">
                         <div className="bg-amber-50/60 border border-amber-200 text-amber-900 p-4 rounded-2xl text-xs space-y-1">
                           <p className="font-bold flex items-center gap-1 text-amber-950">
                             <Users className="w-4 h-4 text-amber-700" />
-                            Sistem Kebenaran Kemasukan Sektor (Role Assignments)
+                            Sistem Kebenaran Kemasukan Sektor (Registered Emails Only)
                           </p>
                           <p className="text-slate-600">
-                            Pegawai yang login melalui Google Auth buat kali pertama akan bermula sebagai role <strong className="text-slate-800">PEMERHATI</strong>. Super Admin boleh menentukan role rasmi (seperti KETUA UNIT atau ADMIN SPS) secara terus di bawah bagi membolehkan mereka memuat naik serta meluluskan fail unit masing-masing.
+                            Akses log masuk kini dikawal sepenuhnya menggunakan senarai email berdaftar. Hanya alamat email yang tersenarai secara rasmi di bawah sahaja dibenarkan log masuk ke dalam Dashboard. Pengguna tidak berdaftar akan disekat serta-merta.
                           </p>
                         </div>
 
-                        {/* Add role assignment form */}
+                        {/* Add email form */}
                         <div className="bg-white border border-slate-200 p-4 rounded-2xl space-y-3">
-                          <h4 className="text-xs font-extrabold text-[#0F2D52] uppercase tracking-wide">Daftarkan Kebenaran Pegawai Baru:</h4>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div className="space-y-1">
+                          <h4 className="text-xs font-extrabold text-[#0F2D52] uppercase tracking-wide">Daftarkan Alamat Email Baru:</h4>
+                          <div className="flex flex-col sm:flex-row gap-3">
+                            <div className="flex-1 space-y-1">
                               <label className="text-[10px] font-bold text-slate-500">Alamat E-mel Google/Gmail:</label>
                               <input
                                 type="email"
                                 placeholder="pegawai@gmail.com"
                                 value={newEmail}
                                 onChange={(e) => setNewEmail(e.target.value)}
-                                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs outline-none focus:bg-white focus:border-[#1565C0]"
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs outline-none focus:bg-white focus:border-[#1565C0] font-medium"
                               />
                             </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-500">Sektor Peranan (Role):</label>
-                              <select
-                                value={newRole}
-                                onChange={(e) => setNewRole(e.target.value)}
-                                className="w-full px-1.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs outline-none focus:bg-white"
+                            <div className="sm:pt-5 flex items-end">
+                              <button
+                                onClick={() => addRegisteredEmail()}
+                                className="w-full sm:w-auto px-5 py-2 bg-[#1565C0] hover:bg-[#0F2D52] text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 border border-slate-800"
                               >
-                                <option value="PEMERHATI">PEMERHATI (Akses Baca Sahaja)</option>
-                                <option value="PEGAWAI">PEGAWAI (Upload & Urus Unit)</option>
-                                <option value="KETUA UNIT">KETUA UNIT (Pengesah & Cetak)</option>
-                                <option value="ADMIN SPS">ADMIN SPS (Penuh SPS)</option>
-                                <option value="SUPER ADMIN">SUPER ADMIN</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-500">Akses Unit Khas:</label>
-                              <select
-                                value={newUnit}
-                                onChange={(e) => setNewUnit(e.target.value)}
-                                className="w-full px-1.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs outline-none focus:bg-white"
-                              >
-                                <option value="">Semua/Tiada Unit Khusus</option>
-                                <option value="UNIT_SWASTA">Unit Swasta</option>
-                                <option value="UNIT_RENDAH">Unit Rendah</option>
-                                <option value="UNIT_MENENGAH">Unit Menengah & Tingkatan 6</option>
-                                <option value="UNIT_PRASEKOLAH">Unit Prasekolah</option>
-                                <option value="UNIT_PENDIDIKAN_KHAS">Unit Pendidikan Khas</option>
-                                <option value="UNIT_HEM">Unit HEM</option>
-                                <option value="UNIT_KOKURIKULUM">Unit Peperiksaan</option>
-                                <option value="UNIT_SUKAN">SIP+</option>
-                              </select>
+                                <UserPlus className="w-3.5 h-3.5" />
+                                Daftar Email
+                              </button>
                             </div>
                           </div>
-                          
-                          <div className="pt-2 flex justify-end">
-                            <button
-                              onClick={() => addRoleAssignment()}
-                              className="px-4 py-2 bg-[#1565C0] hover:bg-[#0F2D52] text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
-                            >
-                              <UserPlus className="w-3.5 h-3.5" />
-                              Daftar & Berikan Role
-                            </button>
-                          </div>
+                          {roleSaveSuccess && (
+                            <div className="text-xs text-green-600 font-bold">✓ Alamat email berjaya didaftarkan ke dalam sistem.</div>
+                          )}
                         </div>
 
                         {/* Recent User Login Quick Actions */}
@@ -749,99 +704,93 @@ export default function LandingPage() {
                             <div className="bg-white border border-slate-200/80 rounded-xl overflow-hidden text-xs">
                               <div className="grid grid-cols-2 bg-slate-100 p-2 font-bold text-[10px] tracking-wider text-slate-500 uppercase">
                                 <div>Butiran Pegawai</div>
-                                <div className="text-right">Tindakan Segera</div>
+                                <div className="text-right flex justify-end gap-1 items-center">Pilih / Status Pendaftaran</div>
                               </div>
-                              <div className="divide-y divide-slate-100 max-h-[150px] overflow-y-auto">
-                                {loggedInUsers.map((userObj: any) => (
-                                  <div key={userObj.email} className="grid grid-cols-2 p-2 hover:bg-slate-50/60 items-center">
-                                    <div className="flex items-center gap-2">
-                                      {userObj.photoURL ? (
-                                        <img src={userObj.photoURL} alt="p" className="w-6 h-6 rounded-full" />
-                                      ) : (
-                                        <div className="w-6 h-6 bg-slate-200 text-slate-600 rounded-full flex items-center justify-center font-bold text-[10px]">{userObj.name[0]}</div>
-                                      )}
-                                      <div className="truncate">
-                                        <p className="font-bold text-slate-700 truncate">{userObj.name}</p>
-                                        <p className="text-[10px] text-slate-400 select-all truncate">{userObj.email}</p>
-                                      </div>
-                                    </div>
-                                    <div className="flex flex-col items-end gap-1">
-                                      <div className="flex gap-1.5">
-                                        <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 rounded font-bold">
-                                          {roleAssignments[userObj.email.toLowerCase()]?.role || 'PEMERHATI'}
-                                        </span>
-                                        {roleAssignments[userObj.email.toLowerCase()]?.unit && (
-                                          <span className="text-[9px] bg-blue-50 text-[#1565C0] px-1.5 rounded font-bold">
-                                            {roleAssignments[userObj.email.toLowerCase()]?.unit}
-                                          </span>
+                              <div className="divide-y divide-slate-100 max-h-[150px] overflow-y-auto w-full">
+                                {loggedInUsers.map((userObj: any) => {
+                                  const isRegistered = !!registeredEmails[userObj.email.toLowerCase()] || userObj.email.toLowerCase() === 'syahrulxy91@gmail.com';
+                                  return (
+                                    <div key={userObj.email} className="grid grid-cols-2 p-2 hover:bg-slate-50/60 items-center">
+                                      <div className="flex items-center gap-2">
+                                        {userObj.photoURL ? (
+                                          <img src={userObj.photoURL} alt="p" className="w-6 h-6 rounded-full" />
+                                        ) : (
+                                          <div className="w-6 h-6 bg-slate-200 text-slate-600 rounded-full flex items-center justify-center font-bold text-[10px]">{userObj.name ? userObj.name[0] : 'U'}</div>
                                         )}
+                                        <div className="truncate">
+                                          <p className="font-bold text-slate-700 truncate">{userObj.name || 'User'}</p>
+                                          <p className="text-[10px] text-slate-400 select-all truncate">{userObj.email}</p>
+                                        </div>
                                       </div>
-                                      <button
-                                        onClick={() => {
-                                          setNewEmail(userObj.email);
-                                          // prefill roles
-                                          const assigned = roleAssignments[userObj.email.toLowerCase()];
-                                          if (assigned) {
-                                            setNewRole(assigned.role);
-                                            setNewUnit(assigned.unit || '');
-                                          }
-                                        }}
-                                        className="text-[10px] text-blue-600 hover:underline font-semibold cursor-pointer"
-                                      >
-                                        Sunting / Pilih E-mel
-                                      </button>
+                                      <div className="flex flex-col items-end gap-1 justify-center">
+                                        <div className="flex gap-1.5 items-center">
+                                          {isRegistered ? (
+                                            <span className="text-[9px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-black border border-green-200 uppercase">Berdaftar</span>
+                                          ) : (
+                                            <span className="text-[9px] bg-red-50 text-red-700 px-1.5 py-0.5 rounded font-black border border-red-200 uppercase">Sekat (Belum Berdaftar)</span>
+                                          )}
+                                        </div>
+                                        <button
+                                          onClick={() => {
+                                            setNewEmail(userObj.email);
+                                          }}
+                                          className="text-[10px] text-[#1565C0] hover:underline font-semibold cursor-pointer"
+                                        >
+                                          Pilih E-mel Ini
+                                        </button>
+                                      </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           </div>
                         )}
 
-                        {/* List of Custom Assignments Table */}
+                        {/* List of Registered Emails Table */}
                         <div className="space-y-2">
-                          <h5 className="text-[11px] font-bold text-slate-700 tracking-wider uppercase">Senarai Pengecualian Sistem Yang Aktif:</h5>
+                          <h5 className="text-[11px] font-bold text-slate-700 tracking-wider uppercase">Senarai Email Berdaftar (Kebenaran Masuk):</h5>
                           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                             <table className="w-full text-left border-collapse text-xs">
                               <thead>
                                 <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
-                                  <th className="p-3">E-mel Berdaftar</th>
-                                  <th className="p-3">Peranan Ditetapkan</th>
-                                  <th className="p-3">Sektor Unit Ambilan</th>
+                                  <th className="p-3">Alamat Email Berdaftar</th>
+                                  <th className="p-3">Status Sistem</th>
+                                  <th className="p-3">Tarikh Daftar</th>
                                   <th className="p-3 text-right">Padam</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100">
                                 {/* Primary Super Admin main listing */}
                                 <tr className="hover:bg-slate-50/50 bg-blue-50/20">
-                                  <td className="p-3 text-slate-800 font-bold">syahrulxy91@gmail.com</td>
+                                  <td className="p-3 text-slate-800 font-bold select-all">syahrulxy91@gmail.com</td>
                                   <td className="p-3">
-                                    <span className="bg-red-100 text-red-700 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
-                                      SUPER ADMIN
+                                    <span className="bg-red-100 text-red-700 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-red-200">
+                                      SUPER ADMIN (UTAMA)
                                     </span>
                                   </td>
-                                  <td className="p-3 text-slate-400 italic">Sektor SPS (Awan Utama)</td>
+                                  <td className="p-3 text-slate-400 italic">Sistem Utama (Kekal)</td>
                                   <td className="p-3 text-right">
                                     <span className="text-[10px] text-slate-400 font-semibold italic">Terkunci</span>
                                   </td>
                                 </tr>
 
-                                {Object.keys(roleAssignments).map((emailKey) => (
+                                {Object.keys(registeredEmails).map((emailKey) => (
                                   <tr key={emailKey} className="hover:bg-slate-50">
                                     <td className="p-3 text-slate-700 select-all font-medium">{emailKey}</td>
                                     <td className="p-3">
-                                      <span className="bg-blue-100 text-[#1565C0] text-[10px] font-bold px-2 py-0.5 rounded-full">
-                                        {roleAssignments[emailKey].role}
+                                      <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-200">
+                                        PENGGUNA SAH
                                       </span>
                                     </td>
-                                    <td className="p-3 font-semibold text-slate-600 text-xs">
-                                      {roleAssignments[emailKey].unit || 'Semua Unit'}
+                                    <td className="p-3 text-slate-500 font-medium text-xs">
+                                      {registeredEmails[emailKey].createdAt ? new Date(registeredEmails[emailKey].createdAt!).toLocaleDateString('ms-MY') : 'Sedia Ada'}
                                     </td>
                                     <td className="p-3 text-right">
                                       <button
-                                        onClick={() => removeRoleAssignment(emailKey)}
+                                        onClick={() => removeRegisteredEmail(emailKey)}
                                         className="p-1 hover:bg-red-50 text-red-600 hover:text-red-700 rounded transition-colors cursor-pointer"
-                                        title="Buang kebenaran peranan pegawai"
+                                        title="Buang kebenaran kemasukan email ini"
                                       >
                                         <Trash2 className="w-4 h-4" />
                                       </button>
@@ -849,10 +798,10 @@ export default function LandingPage() {
                                   </tr>
                                 ))}
 
-                                {Object.keys(roleAssignments).length === 0 && (
+                                {Object.keys(registeredEmails).length === 0 && (
                                   <tr>
                                     <td colSpan={4} className="p-6 text-center text-slate-400 italic">
-                                      Tiada pegawai tambahan berdaftar setakat ini. Semua akaun lain adalah "PEMERHATI" secara default.
+                                      Tiada email tambahan yang didaftarkan. Pengguna luar disekat secara lalai.
                                     </td>
                                   </tr>
                                 )}

@@ -1,72 +1,42 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // ── Default-deny Catch-all ──────────────────────────────
+    // Default-deny Catch-all Gatekeeper
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // ── Helper Functions ────────────────────────────────────
+    // Check if user is a dynamic Super Admin
     function isSuperAdminUser() {
-      return request.auth != null && (
-        request.auth.token.email.toLowerCase() == "syahrulxy91@gmail.com" ||
-        (exists(/databases/$(database)/documents/roleAssignments/$(request.auth.token.email.toLowerCase())) &&
-         get(/databases/$(database)/documents/roleAssignments/$(request.auth.token.email.toLowerCase())).data.role == "SUPER ADMIN")
-      );
+      return request.auth != null && 
+        request.auth.token.email != null && (
+          request.auth.token.email == "syahrulxy91@gmail.com" ||
+          request.auth.token.email.toLower() == "syahrulxy91@gmail.com"
+        );
     }
 
-    function getUserRole() {
-      return get(/databases/$(database)/documents/roleAssignments/$(request.auth.token.email.toLowerCase())).data.role;
-    }
-
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    function isSeniorRole() {
-      return isAuthenticated() && getUserRole() in ["SUPER ADMIN", "ADMIN SPS", "KETUA UNIT"];
-    }
-
-    // ── System Settings ─────────────────────────────────────
+    // Rules for centralized system settings
     match /systemSettings/{configId} {
-      allow read: if isAuthenticated();
+      allow read: if true; // Any logged-in as well as visitor can view config
       allow write: if isSuperAdminUser();
     }
 
-    // ── Organisasi ──────────────────────────────────────────
+    // Rules for PPD Gua Musang Organizational Structure
     match /organisasi/{nodeId} {
-      allow read: if isAuthenticated();
+      allow read: if true; // All authorized readers can view the structural design
       allow write: if isSuperAdminUser();
     }
 
-    // ── Role Assignments ────────────────────────────────────
+    // Rules for Role Assignments
     match /roleAssignments/{email} {
-      allow read: if isAuthenticated();
+      allow read: if request.auth != null; // All authenticated users can read to fetch their role
       allow write: if isSuperAdminUser();
     }
 
-    // ── Reports / Dokumen ───────────────────────────────────
-    match /reports/{reportId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update, delete: if isSuperAdminUser() || isSeniorRole();
+    // Rules for Registered Emails Only
+    match /registeredEmails/{email} {
+      allow read: if request.auth != null; // All authenticated users can read/check registered emails
+      allow write: if isSuperAdminUser();
     }
-
-    // ── Audit Logs ──────────────────────────────────────────
-    match /auditLogs/{logId} {
-      allow read: if isSuperAdminUser();
-      allow create: if isAuthenticated();
-      allow update, delete: if false;
-    }
-
-    // ── Drive Folder Cache ──────────────────────────────────
-    // Ditulis oleh Cloud Functions (Admin SDK bypass rules)
-    // Dibaca oleh Super Admin sahaja untuk debugging
-    match /driveFolderCache/{unitName} {
-      allow read: if isSuperAdminUser();
-      allow write: if false;
-    }
-
   }
 }

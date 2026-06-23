@@ -5,32 +5,29 @@ export type Unit =
   | 'UNIT RENDAH' 
   | 'UNIT MENENGAH' 
   | 'UNIT MENENGAH & TINGKATAN 6'
-  | 'UNIT PRASEKOLAH' 
-  | 'UNIT PENDIDIKAN KHAS' 
-  | 'UNIT HEM' 
-  | 'UNIT KOKURIKULUM' 
-  | 'UNIT PEPERIKSAAN'
-  | 'UNIT SUKAN'
+  | 'UNIT PRASEKOLAH'
+  | 'SIP'
   | 'SIP+';
 
 export function getUnitDisplayName(unit: string | undefined): string {
   if (!unit) return '';
   const sanitized = unit.toUpperCase().replace(/_/g, ' ').trim();
+  
   if (sanitized === 'UNIT MENENGAH' || sanitized === 'UNIT_MENENGAH' || sanitized.includes('MENENGAH')) {
     return 'Unit Menengah & Tingkatan 6';
   }
-  if (sanitized === 'UNIT KOKURIKULUM' || sanitized === 'UNIT_KOKURIKULUM' || sanitized.includes('KOKURIKULUM') || sanitized.includes('PEPERIKSAAN')) {
-    return 'Unit Peperiksaan';
+  if (sanitized === 'UNIT SWASTA' || sanitized === 'SWASTA') {
+    return 'Unit Swasta';
   }
-  if (sanitized === 'UNIT SUKAN' || sanitized === 'UNIT_SUKAN' || sanitized.includes('SUKAN') || sanitized.includes('SIP')) {
+  if (sanitized === 'UNIT RENDAH' || sanitized === 'RENDAH') {
+    return 'Unit Rendah';
+  }
+  if (sanitized === 'UNIT PRASEKOLAH' || sanitized === 'PRASEKOLAH') {
+    return 'Unit Prasekolah';
+  }
+  if (sanitized.includes('SIP') || sanitized.includes('SUKAN')) {
     return 'SIP+';
   }
-  
-  if (sanitized === 'UNIT SWASTA') return 'Unit Swasta';
-  if (sanitized === 'UNIT RENDAH') return 'Unit Rendah';
-  if (sanitized === 'UNIT PRASEKOLAH') return 'Unit Prasekolah';
-  if (sanitized === 'UNIT PENDIDIKAN KHAS' || sanitized === 'UNIT_PENDIDIKAN_KHAS') return 'Unit Pendidikan Khas';
-  if (sanitized === 'UNIT HEM') return 'Unit HEM';
   
   return sanitized
     .toLowerCase()

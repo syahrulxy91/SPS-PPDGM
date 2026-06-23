@@ -113,14 +113,14 @@ export default function UnitDashboard() {
       </div>
 
       {/* Categories Horizontal Tabs Selector */}
-      <div className="flex-1 w-full overflow-x-auto pb-1 scrollbar-thin">
-        <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl min-w-max border border-slate-200/50">
+      <div className="flex-1 w-full overflow-x-auto pb-1.5 scrollbar-thin">
+        <div className="flex gap-2.5 p-1.5 bg-slate-100 rounded-2xl min-w-max border border-slate-200/50">
           <button
             onClick={() => setSelectedKategoriTab('Semua')}
-            className={`px-4.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+            className={`px-6 py-3 rounded-xl text-xs sm:text-sm transition-all cursor-pointer ${
               selectedKategoriTab === 'Semua'
-                ? 'bg-white text-indigo-600 shadow-xs'
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'bg-white text-indigo-600 shadow-sm font-bold'
+                : 'text-slate-500 hover:text-slate-800 font-medium'
             }`}
           >
             Semua ({totalDocs})
@@ -132,10 +132,10 @@ export default function UnitDashboard() {
               <button
                 key={k}
                 onClick={() => setSelectedKategoriTab(k)}
-                className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                className={`px-5.5 py-3 rounded-xl text-xs sm:text-sm transition-all cursor-pointer ${
                   selectedKategoriTab === k
-                    ? 'bg-white text-indigo-600 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
+                    ? 'bg-white text-indigo-600 shadow-sm font-bold'
+                    : 'text-slate-500 hover:text-slate-800 font-medium'
                 }`}
               >
                 {k} ({count})
@@ -248,14 +248,14 @@ interface StatBoxProps {
 
 function StatBox({ label, value, icon, description }: StatBoxProps) {
   return (
-    <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm hover:border-indigo-500/20 transition-all flex items-center space-x-4">
-      <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 shrink-0">
+    <div className="bg-white border border-slate-100 rounded-3xl p-7 shadow-sm hover:border-indigo-500/20 transition-all flex flex-col items-center justify-center text-center space-y-4">
+      <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 shrink-0">
         {icon}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-[10px] text-slate-400 font-black uppercase tracking-widest">{label}</div>
-        <div className="text-2xl font-black text-slate-800 tracking-tight leading-none my-1">{value}</div>
-        <div className="text-[10px] text-slate-400 font-semibold">{description}</div>
+        <div className="text-xs text-slate-400 font-medium uppercase tracking-widest leading-normal mb-1.5">{label}</div>
+        <div className="text-4xl font-black text-slate-800 tracking-tight leading-none my-2">{value}</div>
+        <div className="text-xs text-slate-400 font-normal leading-normal">{description}</div>
       </div>
     </div>
   );
