@@ -1,6 +1,27 @@
-import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { auth } from './firebase';
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut, setPersistence, browserLocalPersistence, getIdTokenResult } from 'firebase/auth';
+import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { AppUser } from '../types';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+
+export const syncUserToFirestore = async (appUser: AppUser) => {
+  const path = `users/${appUser.uid}`;
+  try {
+    const userDocRef = doc(db, 'users', appUser.uid);
+    await setDoc(userDocRef, {
+      uid: appUser.uid,
+      name: appUser.name,
+      email: appUser.email,
+      photoURL: appUser.photoURL,
+      role: appUser.role || 'USER',
+      lastLogin: serverTimestamp(),
+      disabled: false
+    }, { merge: true });
+    console.log('[DEBUG AUTH] Berjaya menyelaraskan pengguna ke Firestore:', appUser.email);
+  } catch (err) {
+    console.error('[DEBUG AUTH] Gagal menyelaraskan pengguna ke Firestore:', err);
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+};
 
 // Set Firebase Auth Persistence explicitly to browserLocalPersistence for reliable session tracking
 setPersistence(auth, browserLocalPersistence)
@@ -14,7 +35,6 @@ setPersistence(auth, browserLocalPersistence)
 const provider = new GoogleAuthProvider();
 
 let isSigningIn = false;
-let cachedAccessToken: string | null = sessionStorage.getItem('sps_auth_token') || null;
 let currentAppUser: AppUser | null = sessionStorage.getItem('sps_auth_user') ? JSON.parse(sessionStorage.getItem('sps_auth_user')!) : null;
 
 export const initAuth = (
@@ -26,39 +46,58 @@ export const initAuth = (
     
     if (user) {
       const email = user.email || '';
-      const emailLower = email.toLowerCase();
+      const emailLower = email.toLowerCase().trim();
       const isMoeEmail = emailLower.endsWith('@moe.gov.my');
       const isMaintainer = emailLower === 'syahrulxy91@gmail.com';
 
       if (!isMoeEmail && !isMaintainer) {
         console.warn('[SECURITY] Domain email tidak sah dikesan di onAuthStateChanged. Sign out...');
         await signOut(auth).catch(() => {});
-        cachedAccessToken = null;
         currentAppUser = null;
-        sessionStorage.removeItem('sps_auth_token');
         sessionStorage.removeItem('sps_auth_user');
         if (onAuthFailure) onAuthFailure();
         return;
       }
 
-      if (!cachedAccessToken) {
-        cachedAccessToken = sessionStorage.getItem('sps_auth_token');
-      }
-
       try {
-        const token = cachedAccessToken || (await user.getIdToken());
-        cachedAccessToken = token;
-        sessionStorage.setItem('sps_auth_token', token);
-        console.log('[DEBUG AUTH] Berjaya mengesahkan sesi:', user.email, 'Token diperolehi (panjang):', token?.length);
-        if (onAuthSuccess) onAuthSuccess(user, token);
+        const tokenResult = await getIdTokenResult(user);
+        const appRoleFromClaims = tokenResult.claims.appRole as string | undefined;
+        let role: 'SUPER_ADMIN' | 'ADMIN' | 'USER' = 'USER';
+
+        if (appRoleFromClaims === 'SUPER_ADMIN') {
+          role = 'SUPER_ADMIN';
+        } else if (appRoleFromClaims === 'ADMIN') {
+          role = 'ADMIN';
+        } else if (appRoleFromClaims === 'USER') {
+          role = 'USER';
+        } else {
+          // Fallback
+          if (emailLower === 'syahrulxy91@gmail.com') {
+            role = 'SUPER_ADMIN';
+          } else {
+            role = 'USER';
+          }
+        }
+
+        currentAppUser = {
+          uid: user.uid,
+          name: user.displayName || 'Pengguna',
+          email: email,
+          photoURL: user.photoURL || '',
+          role: role
+        };
+
+        sessionStorage.setItem('sps_auth_user', JSON.stringify(currentAppUser));
+        console.log('[DEBUG AUTH] Berjaya mengesahkan sesi:', user.email, 'Role:', role);
+        await syncUserToFirestore(currentAppUser);
+
+        if (onAuthSuccess) onAuthSuccess(user, tokenResult.token);
       } catch (err) {
         console.error('[DEBUG AUTH] Gagal mendapatkan token semasa onAuthStateChanged:', err);
-        cachedAccessToken = null;
         if (onAuthFailure) onAuthFailure();
       }
     } else {
       console.log('[DEBUG AUTH] Tiada sesi Firebase Auth yang aktif.');
-      cachedAccessToken = null;
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -95,9 +134,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     if (!isMoeEmail && !isMaintainer) {
       console.warn('[SECURITY] Sesi ditolak kerana bukan domain @moe.gov.my.');
       await signOut(auth).catch(() => {});
-      cachedAccessToken = null;
       currentAppUser = null;
-      sessionStorage.removeItem('sps_auth_token');
       sessionStorage.removeItem('sps_auth_user');
       throw new Error('Hanya pengguna dengan email @moe.gov.my dibenarkan mengakses sistem ini.');
     }
@@ -110,13 +147,31 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       throw new Error('Gagal mendapatkan access token / ID token dari Firebase Auth');
     }
 
-    cachedAccessToken = resolvedAccessToken;
+    const tokenResult = await getIdTokenResult(result.user);
+    const appRoleFromClaims = tokenResult.claims.appRole as string | undefined;
+    let role: 'SUPER_ADMIN' | 'ADMIN' | 'USER' = 'USER';
+
+    if (appRoleFromClaims === 'SUPER_ADMIN') {
+      role = 'SUPER_ADMIN';
+    } else if (appRoleFromClaims === 'ADMIN') {
+      role = 'ADMIN';
+    } else if (appRoleFromClaims === 'USER') {
+      role = 'USER';
+    } else {
+      // Fallback
+      if (emailLower === 'syahrulxy91@gmail.com') {
+        role = 'SUPER_ADMIN';
+      } else {
+        role = 'USER';
+      }
+    }
 
     currentAppUser = {
       uid: result.user.uid,
       name: result.user.displayName || 'Pengguna',
       email: email,
       photoURL: result.user.photoURL || '',
+      role: role
     };
 
     // Keep logged-in user logging for display in Admin panel (Kakitangan Bersistem)
@@ -138,10 +193,10 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
     localStorage.setItem('sps_logged_in_users', JSON.stringify(loggedInUsers));
 
-    sessionStorage.setItem('sps_auth_token', cachedAccessToken);
     sessionStorage.setItem('sps_auth_user', JSON.stringify(currentAppUser));
+    await syncUserToFirestore(currentAppUser);
 
-    return { user: result.user, accessToken: cachedAccessToken };
+    return { user: result.user, accessToken: resolvedAccessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);
     throw error;
@@ -151,7 +206,15 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
+  if (auth.currentUser) {
+    try {
+      return await auth.currentUser.getIdToken();
+    } catch (err) {
+      console.error('[DEBUG AUTH] Gagal mendapatkan token dari currentUser:', err);
+      return null;
+    }
+  }
+  return null;
 };
 
 export const getCurrentAppUser = (): AppUser | null => {
@@ -168,8 +231,6 @@ export const getCurrentAppUser = (): AppUser | null => {
 
 export const logout = async () => {
   await signOut(auth).catch(() => {});
-  cachedAccessToken = null;
   currentAppUser = null;
-  sessionStorage.removeItem('sps_auth_token');
   sessionStorage.removeItem('sps_auth_user');
 };

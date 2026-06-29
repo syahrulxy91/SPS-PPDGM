@@ -1,24 +1,35 @@
 import React, { useState, useEffect } from 'react';
 import { googleSignIn, getCurrentAppUser, logout } from '../lib/auth';
 import { resetDriveFoldersCache } from '../lib/drive';
-import { getGoogleDriveConfigSync, saveGoogleDriveConfig, fetchGoogleDriveConfig, db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { getGoogleDriveConfigSync, saveGoogleDriveConfig, fetchGoogleDriveConfig } from '../lib/firebase';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Settings, Folder, UserPlus, Trash2, ShieldAlert, Key, Save, 
-  Users, CheckCircle, X, Lock, AlertTriangle, Shield, LogOut, RefreshCw 
+  Settings, Folder, ShieldAlert, Save, CheckCircle, X, Lock, AlertTriangle, Shield, LogOut, RefreshCw 
 } from 'lucide-react';
 
 // Lokasi imej latar belakang utama (Disimpan dalam src/public/bg/login-bg.png)
 const BG_IMAGE_PATH = '/bg/login-bg.png';
 
-// Helper to prevent Firestore connection from hanging indefinitely on write if blocked/offline
-const withWriteTimeout = <T extends unknown>(promise: Promise<T>, timeoutMs: number = 3000): Promise<T> => {
+/**
+ * Menghalang sambungan Firestore daripada tergantung terlalu lama semasa operasi menulis
+ * jika rangkaian tersekat atau peranti berada di luar talian (offline).
+ * 
+ * NOTA KESELAMATAN & KOORDINASI MAINTAINER:
+ * - Operasi timeout ini dianggap sebagai KEGAGALAN rangkaian atau Firestore (bukan kejayaan).
+ * - Sebarang pengendalian bagi storan peranti setempat (local-first save/cache sync) perlu
+ *   diuruskan secara berasingan di peringkat lapisan pemanggil, bukan di dalam helper abstrak ini.
+ */
+function withWriteTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number = 3000
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      console.warn('SAMBUNGAN TERGENDALA: Menyimpan ke dalam storan peranti setempat dahulu untuk disegerakkan kemudian.');
-      resolve(null as any); // Resolve instead of rejecting, treating local-first save as a success
+      console.warn(
+        `SAMBUNGAN TERGENDALA: Panggilan Firestore melebihi had masa (${timeoutMs} ms).`
+      );
+      reject(new Error(`Firestore write timeout after ${timeoutMs} ms`));
     }, timeoutMs);
 
     promise
@@ -31,7 +42,7 @@ const withWriteTimeout = <T extends unknown>(promise: Promise<T>, timeoutMs: num
         reject(err);
       });
   });
-};
+}
 
 export default function LandingPage() {
   const navigate = useNavigate();
@@ -42,26 +53,30 @@ export default function LandingPage() {
 
   // Super Admin Control Center modal states
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
-  const [adminTab, setAdminTab] = useState<'drive' | 'roles'>('drive');
   
   // Centralized Google Drive Configuration state
   const [googleDriveConfig, setGoogleDriveConfig] = useState(() => getGoogleDriveConfigSync());
 
-  // Compatibility helper variables
-  const rootFolder = googleDriveConfig.googleDriveRootFolderId;
-  const setRootFolder = (val: string) => {
-    setGoogleDriveConfig(prev => ({ ...prev, googleDriveRootFolderId: val }));
-  };
-
   useEffect(() => {
     if (isAdminModalOpen) {
-      fetchGoogleDriveConfig().then(config => {
-        setGoogleDriveConfig(config);
-      });
+      fetchGoogleDriveConfig()
+        .then(config => {
+          setGoogleDriveConfig(config);
+          if (config.unitFolders) {
+            setUnitFolders(config.unitFolders);
+          }
+        })
+        .catch((err) => {
+          console.warn('[FIRESTORE] Gagal memuatkan konfigurasi Google Drive dari panel Super Admin:', err);
+        });
     }
   }, [isAdminModalOpen]);
   
   const [unitFolders, setUnitFolders] = useState<Record<string, string>>(() => {
+    const config = getGoogleDriveConfigSync();
+    if (config && config.unitFolders && Object.keys(config.unitFolders).length > 0) {
+      return config.unitFolders;
+    }
     const custom = localStorage.getItem('sps_drive_unit_folders');
     if (custom) {
       try {
@@ -71,23 +86,17 @@ export default function LandingPage() {
       }
     }
     return {
-      'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
-      'UNIT_RENDAH': 'UNIT_RENDAH',
-      'UNIT_MENENGAH': 'UNIT_MENENGAH',
-      'UNIT_SWASTA': 'UNIT_SWASTA',
-      'SIP': 'SIP',
+      'UNIT PRASEKOLAH': 'UNIT_PRASEKOLAH',
+      'UNIT RENDAH': 'UNIT_RENDAH',
+      'UNIT MENENGAH & TINGKATAN 6': 'UNIT_MENENGAH',
+      'UNIT SWASTA': 'UNIT_SWASTA',
+      'UNIT SIP+': 'SIP',
       'RUJUKAN_BERSAMA': 'RUJUKAN_BERSAMA'
     };
   });
 
-  const [loggedInUsers, setLoggedInUsers] = useState<any[]>(() => {
-    const custom = localStorage.getItem('sps_logged_in_users');
-    return custom ? JSON.parse(custom) : [];
-  });
-
   // Status flags
   const [driveSaveSuccess, setDriveSaveSuccess] = useState(false);
-  const [roleSaveSuccess, setRoleSaveSuccess] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
 
@@ -114,9 +123,6 @@ export default function LandingPage() {
       if (res) {
         const user = getCurrentAppUser();
         setSessionUser(user);
-        // Refresh logged in list
-        const custom = localStorage.getItem('sps_logged_in_users');
-        setLoggedInUsers(custom ? JSON.parse(custom) : []);
       }
     } catch (e: any) {
       console.error(e);
@@ -136,11 +142,12 @@ export default function LandingPage() {
     const configToSave = {
       googleDriveEnabled: googleDriveConfig.googleDriveEnabled,
       googleDriveRootFolderId: googleDriveConfig.googleDriveRootFolderId,
+      unitFolders: unitFolders,
       updatedBy: updatedByEmail
     };
 
     try {
-      await saveGoogleDriveConfig(configToSave);
+      await withWriteTimeout(saveGoogleDriveConfig(configToSave));
       setGoogleDriveConfig(configToSave);
       localStorage.setItem('sps_drive_root_folder', configToSave.googleDriveRootFolderId);
       localStorage.setItem('sps_drive_unit_folders', JSON.stringify(unitFolders));
@@ -156,7 +163,7 @@ export default function LandingPage() {
   // Determine if the logged-in session email has Super Admin credentials
   const currentEmailLower = sessionUser?.email ? sessionUser.email.toLowerCase() : '';
   const isAuthorizedSuperAdmin = 
-    currentEmailLower === 'syahrulxy91@gmail.com';
+    sessionUser?.role === 'SUPER_ADMIN' || currentEmailLower === 'syahrulxy91@gmail.com';
 
   return (
     <div 
@@ -421,13 +428,12 @@ export default function LandingPage() {
 
                   {/* Operational Tabs */}
                   <div className="flex border-b border-slate-200 bg-white">
-                    <button
-                      onClick={() => setAdminTab('drive')}
-                      className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-xs font-extrabold border-b-2 transition-all cursor-pointer border-[#1565C0] text-[#1565C0] bg-slate-50/20`}
+                    <div
+                      className="flex-1 flex items-center justify-center gap-2 py-3.5 text-xs font-extrabold border-b-2 border-[#1565C0] text-[#1565C0] bg-slate-50/20 cursor-default select-none"
                     >
                       <Folder className="w-4 h-4" />
                       Struktur Google Drive Folder
-                    </button>
+                    </div>
                   </div>
 
                   {/* Panel Details Container */}
@@ -485,11 +491,11 @@ export default function LandingPage() {
                           <h5 className="text-xs font-bold text-[#0F2D52] uppercase tracking-wider mb-2">Pautan Nama Folder Bagi Setiap Unit:</h5>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             {[
-                              { label: 'Unit Prasekolah', key: 'UNIT_PRASEKOLAH' },
-                              { label: 'Unit Rendah', key: 'UNIT_RENDAH' },
-                              { label: 'Unit Menengah & Tingkatan 6', key: 'UNIT_MENENGAH' },
-                              { label: 'Unit Swasta', key: 'UNIT_SWASTA' },
-                              { label: 'SIP+', key: 'SIP' },
+                              { label: 'Unit Prasekolah', key: 'UNIT PRASEKOLAH' },
+                              { label: 'Unit Rendah', key: 'UNIT RENDAH' },
+                              { label: 'Unit Menengah & Tingkatan 6', key: 'UNIT MENENGAH & TINGKATAN 6' },
+                              { label: 'Unit Swasta', key: 'UNIT SWASTA' },
+                              { label: 'SIP+', key: 'UNIT SIP+' },
                               { label: 'Bahan Rujukan Bersama', key: 'RUJUKAN_BERSAMA' }
                             ].map((unitItem) => (
                               <div key={unitItem.key} className="space-y-1">

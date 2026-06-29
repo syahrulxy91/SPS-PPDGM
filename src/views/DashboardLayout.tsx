@@ -15,7 +15,9 @@ import {
   ChevronRight,
   Sparkles,
   HelpCircle,
-  FileText
+  FileText,
+  Activity,
+  Users
 } from 'lucide-react';
 import { logout, getCurrentAppUser } from '../lib/auth';
 import { motion } from 'motion/react';
@@ -31,7 +33,8 @@ const UNITS = [
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const user = getCurrentAppUser();
-  const isSuperAdmin = user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN' || user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
+  const isAdmin = isSuperAdmin || user?.role === 'ADMIN';
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -92,18 +95,42 @@ export default function DashboardLayout() {
             <NavItem to="/dashboard/carian" icon={<Search />} label="Carian Pintar" open={sidebarOpen} />
           </div>
 
-          {/* Super Admin Control Station */}
-          {isSuperAdmin && (
+          {/* Audit & Kawalan Control Station */}
+          {(isSuperAdmin || isAdmin) && (
             <div className="space-y-2">
               <div className={`px-2 text-[11px] font-black text-indigo-400 uppercase tracking-widest ${!sidebarOpen && 'hidden'}`}>
                 Audit &amp; Kawalan
               </div>
-              <NavItem 
-                to="/dashboard" 
-                icon={<ShieldCheck className="text-emerald-400" />} 
-                label="Kawalan Super Admin" 
-                open={sidebarOpen} 
-              />
+              {isSuperAdmin && (
+                <>
+                  <NavItem 
+                    to="/dashboard" 
+                    icon={<ShieldCheck className="text-emerald-400" />} 
+                    label="Kawalan Super Admin" 
+                    open={sidebarOpen} 
+                  />
+                  <NavItem 
+                    to="/dashboard/users" 
+                    icon={<Users className="text-pink-400" />} 
+                    label="Pengurusan Pengguna" 
+                    open={sidebarOpen} 
+                  />
+                  <NavItem 
+                    to="/dashboard/monitoring" 
+                    icon={<Activity className="text-amber-400" />} 
+                    label="📊 System Monitoring" 
+                    open={sidebarOpen} 
+                  />
+                </>
+              )}
+              {isAdmin && (
+                <NavItem 
+                  to="/dashboard/audit" 
+                  icon={<Activity className="text-indigo-400" />} 
+                  label="Log Audit Sistem" 
+                  open={sidebarOpen} 
+                />
+              )}
             </div>
           )}
 

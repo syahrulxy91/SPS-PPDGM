@@ -14,6 +14,9 @@ const LandingPage = React.lazy(() => import('./views/LandingPage'));
 const MainDashboard = React.lazy(() => import('./views/MainDashboard'));
 const UnitDashboard = React.lazy(() => import('./views/UnitDashboard'));
 const CarianPintar = React.lazy(() => import('./views/CarianPintar'));
+const AuditAktiviti = React.lazy(() => import('./views/AuditAktiviti'));
+const UserManagement = React.lazy(() => import('./views/UserManagement'));
+const SystemMonitor = React.lazy(() => import('./views/SystemMonitor'));
 
 // Loader components
 const SplashLoader = () => (
@@ -32,10 +35,6 @@ const ViewLoader = () => (
 );
 
 export default function App() {
-  React.useEffect(() => {
-    fetchGoogleDriveConfig();
-  }, []);
-
   return (
     <BrowserRouter>
       <AppRoutes />
@@ -45,6 +44,16 @@ export default function App() {
 
 function AppRoutes() {
   const { isAuthenticated, loading } = useAuthStatus();
+
+  React.useEffect(() => {
+    // Panggilan Google Drive Config hanya dibuat selepas pengguna disahkan masuk (isAuthenticated === true),
+    // bertujuan mengelakkan ralat 'permission-denied' Firestore daripada dicetuskan ketika pengguna belum log masuk.
+    if (!isAuthenticated) return;
+
+    fetchGoogleDriveConfig().catch((err) => {
+      console.warn('[FIRESTORE] Gagal mengambil konfigurasi Google Drive selepas log masuk:', err);
+    });
+  }, [isAuthenticated]);
 
   if (loading) {
     return <SplashLoader />;
@@ -77,6 +86,30 @@ function AppRoutes() {
             element={
               <React.Suspense fallback={<ViewLoader />}>
                 <CarianPintar />
+              </React.Suspense>
+            } 
+          />
+          <Route 
+            path="audit" 
+            element={
+              <React.Suspense fallback={<ViewLoader />}>
+                <AuditAktiviti />
+              </React.Suspense>
+            } 
+          />
+          <Route 
+            path="users" 
+            element={
+              <React.Suspense fallback={<ViewLoader />}>
+                <UserManagement />
+              </React.Suspense>
+            } 
+          />
+          <Route 
+            path="monitoring" 
+            element={
+              <React.Suspense fallback={<ViewLoader />}>
+                <SystemMonitor />
               </React.Suspense>
             } 
           />

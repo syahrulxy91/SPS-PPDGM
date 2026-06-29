@@ -36,6 +36,106 @@
         "updatedBy": { "type": "string" }
       },
       "required": ["name", "position", "category", "sortOrder", "isActive", "updatedAt", "updatedBy"]
+    },
+    "rateLimit": {
+      "title": "Rate Limit Record",
+      "description": "Sliding window rate limit state for a user and function",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "function": { "type": "string" },
+        "windowStart": { "type": "string", "format": "date-time" },
+        "count": { "type": "integer" },
+        "lastRequest": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "function", "windowStart", "count", "lastRequest"]
+    },
+    "uploadRequest": {
+      "title": "Upload Request",
+      "description": "Enterprise Idempotency Layer upload request logs",
+      "type": "object",
+      "properties": {
+        "uploadToken": { "type": "string" },
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "status": { "type": "string" },
+        "requestId": { "type": "string" },
+        "unit": { "type": "string" },
+        "driveFileId": { "type": "string" },
+        "driveFileUrl": { "type": "string" },
+        "fileSize": { "type": "integer" },
+        "version": { "type": "integer" },
+        "lastAccessedAt": { "type": "string", "format": "date-time" },
+        "createdByIP": { "type": "string" },
+        "userAgent": { "type": "string" },
+        "requestMetadata": {
+          "type": "object",
+          "properties": {
+            "clientIp": { "type": "string" },
+            "forwardedFor": { "type": "string" },
+            "host": { "type": "string" },
+            "origin": { "type": "string" },
+            "userAgent": { "type": "string" }
+          },
+          "required": ["clientIp", "forwardedFor", "host", "origin", "userAgent"]
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "failedAt": { "type": "string", "format": "date-time" },
+        "errorMessage": { "type": "string" }
+      },
+      "required": ["uploadToken", "uid", "email", "status", "requestId", "createdAt", "expiresAt", "version", "lastAccessedAt", "createdByIP", "userAgent", "requestMetadata"]
+    },
+    "globalMetrics": {
+      "title": "Global System Metrics",
+      "description": "Centralized system-wide metrics and rolling aggregates",
+      "type": "object",
+      "properties": {
+        "version": { "type": "integer" },
+        "metricsVersion": { "type": "integer" },
+        "totalUploads": { "type": "integer" },
+        "successfulUploads": { "type": "integer" },
+        "failedUploads": { "type": "integer" },
+        "deletedFiles": { "type": "integer" },
+        "downloadCount": { "type": "integer" },
+        "loginCount": { "type": "integer" },
+        "logoutCount": { "type": "integer" },
+        "activeUsersToday": { "type": "integer" },
+        "rateLimitEventsToday": { "type": "integer" },
+        "averageUploadSize": { "type": "number" },
+        "averageUploadDuration": { "type": "number" },
+        "driveFailures": { "type": "integer" },
+        "securityIncidents": { "type": "integer" },
+        "lastUploadTime": { "type": "string", "format": "date-time" },
+        "lastUpdated": { "type": "string", "format": "date-time" },
+        "lastEvent": { "type": "string" },
+        "lastEventId": { "type": "string" },
+        "lastUpdatedBy": { "type": "string" }
+      },
+      "required": ["version", "totalUploads", "successfulUploads", "failedUploads", "deletedFiles", "downloadCount", "loginCount", "logoutCount", "activeUsersToday", "rateLimitEventsToday", "averageUploadSize", "averageUploadDuration", "lastUpdated"]
+    },
+    "dailyMetrics": {
+      "title": "Daily System Metrics",
+      "description": "Aggregated daily metrics for system health tracking",
+      "type": "object",
+      "properties": {
+        "uploads": { "type": "integer" },
+        "failures": { "type": "integer" },
+        "downloads": { "type": "integer" },
+        "deleted": { "type": "integer" },
+        "activeUsers": { "type": "integer" },
+        "rateLimits": { "type": "integer" },
+        "driveFailures": { "type": "integer" },
+        "securityIncidents": { "type": "integer" },
+        "lastUpdated": { "type": "string", "format": "date-time" },
+        "metricsVersion": { "type": "integer" },
+        "version": { "type": "integer" },
+        "lastEvent": { "type": "string" },
+        "lastEventId": { "type": "string" },
+        "lastUpdatedBy": { "type": "string" }
+      },
+      "required": ["uploads", "failures", "downloads", "deleted", "activeUsers", "rateLimits", "lastUpdated"]
     }
   },
   "firestore": {
@@ -46,6 +146,22 @@
     "organisasi/{nodeId}": {
       "schema": "organisasiNode",
       "description": "Organizational structure members (KPPD, Timbalan, Penolong Pegawai)"
+    },
+    "rateLimits/{limitId}": {
+      "schema": "rateLimit",
+      "description": "Sliding window rate limit records for API endpoints"
+    },
+    "uploadRequests/{uploadToken}": {
+      "schema": "uploadRequest",
+      "description": "Enterprise Idempotency Layer upload token requests"
+    },
+    "systemMetrics/global": {
+      "schema": "globalMetrics",
+      "description": "System-wide aggregated metrics"
+    },
+    "systemMetrics/{dailyId}": {
+      "schema": "dailyMetrics",
+      "description": "Daily metrics for individual days"
     }
   }
 }

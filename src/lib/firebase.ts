@@ -66,6 +66,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 export interface GoogleDriveConfig {
   googleDriveEnabled: boolean;
   googleDriveRootFolderId: string;
+  unitFolders: Record<string, string>;
   updatedBy: string;
 }
 
@@ -73,6 +74,14 @@ export interface GoogleDriveConfig {
 export const DEFAULT_DRIVE_CONFIG: GoogleDriveConfig = {
   googleDriveEnabled: true,
   googleDriveRootFolderId: '1-Gdkrl8YiQ-pJzi_vSV940qDRv_9OEaH',
+  unitFolders: {
+    'UNIT PRASEKOLAH': 'UNIT_PRASEKOLAH',
+    'UNIT RENDAH': 'UNIT_RENDAH',
+    'UNIT MENENGAH & TINGKATAN 6': 'UNIT_MENENGAH',
+    'UNIT SWASTA': 'UNIT_SWASTA',
+    'UNIT SIP+': 'SIP',
+    'RUJUKAN_BERSAMA': 'RUJUKAN_BERSAMA'
+  },
   updatedBy: 'syahrulxy91@gmail.com'
 };
 
@@ -93,6 +102,10 @@ export async function fetchGoogleDriveConfig(): Promise<GoogleDriveConfig> {
       const config: GoogleDriveConfig = {
         googleDriveEnabled: data.googleDriveEnabled !== undefined ? Boolean(data.googleDriveEnabled) : true,
         googleDriveRootFolderId: data.googleDriveRootFolderId || DEFAULT_DRIVE_CONFIG.googleDriveRootFolderId,
+        unitFolders: {
+          ...DEFAULT_DRIVE_CONFIG.unitFolders,
+          ...(data.unitFolders || {})
+        },
         updatedBy: data.updatedBy || DEFAULT_DRIVE_CONFIG.updatedBy
       };
       cachedConfig = config;
@@ -111,6 +124,10 @@ export async function fetchGoogleDriveConfig(): Promise<GoogleDriveConfig> {
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
+        parsed.unitFolders = {
+          ...DEFAULT_DRIVE_CONFIG.unitFolders,
+          ...(parsed.unitFolders || {})
+        };
         cachedConfig = parsed;
         return parsed;
       } catch (e) {
@@ -132,6 +149,10 @@ export function getGoogleDriveConfigSync(): GoogleDriveConfig {
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
+      parsed.unitFolders = {
+        ...DEFAULT_DRIVE_CONFIG.unitFolders,
+        ...(parsed.unitFolders || {})
+      };
       cachedConfig = parsed;
       return parsed;
     } catch (e) {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signOut, getIdTokenResult } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { AppUser } from '../types';
 
@@ -43,7 +43,6 @@ export function useAuthStatus() {
       if (!firebaseUser) {
         setUser(null);
         sessionStorage.removeItem('sps_auth_user');
-        sessionStorage.removeItem('sps_auth_token');
         setLoading(false);
         return;
       }
@@ -58,27 +57,53 @@ export function useAuthStatus() {
         await signOut(auth).catch(() => {});
         setUser(null);
         sessionStorage.removeItem('sps_auth_user');
-        sessionStorage.removeItem('sps_auth_token');
         setLoading(false);
         return;
       }
 
       try {
-        const freshToken = await firebaseUser.getIdToken();
-        sessionStorage.setItem('sps_auth_token', freshToken);
+        const tokenResult = await getIdTokenResult(firebaseUser);
+        const appRoleFromClaims = tokenResult.claims.appRole as string | undefined;
+        let role: 'SUPER_ADMIN' | 'ADMIN' | 'USER' = 'USER';
+
+        if (appRoleFromClaims === 'SUPER_ADMIN') {
+          role = 'SUPER_ADMIN';
+        } else if (appRoleFromClaims === 'ADMIN') {
+          role = 'ADMIN';
+        } else if (appRoleFromClaims === 'USER') {
+          role = 'USER';
+        } else {
+          // Fallback
+          if (emailLower === 'syahrulxy91@gmail.com') {
+            role = 'SUPER_ADMIN';
+          } else {
+            role = 'USER';
+          }
+        }
+
+        const appUser: AppUser = {
+          uid: firebaseUser.uid,
+          name: firebaseUser.displayName || 'Pengguna',
+          email: email,
+          photoURL: firebaseUser.photoURL || '',
+          role: role
+        };
+
+        setUser(appUser);
+        sessionStorage.setItem('sps_auth_user', JSON.stringify(appUser));
       } catch (err) {
-        console.error('[DEBUG useAuthStatus] Gagal memperolehi ID Token:', err);
+        console.error('[DEBUG useAuthStatus] Gagal mengambil claims:', err);
+        // Fallback user state without crashes
+        const appUser: AppUser = {
+          uid: firebaseUser.uid,
+          name: firebaseUser.displayName || 'Pengguna',
+          email: email,
+          photoURL: firebaseUser.photoURL || '',
+          role: emailLower === 'syahrulxy91@gmail.com' ? 'SUPER_ADMIN' : 'USER'
+        };
+        setUser(appUser);
+        sessionStorage.setItem('sps_auth_user', JSON.stringify(appUser));
       }
-
-      const appUser: AppUser = {
-        uid: firebaseUser.uid,
-        name: firebaseUser.displayName || 'Pengguna',
-        email: email,
-        photoURL: firebaseUser.photoURL || '',
-      };
-
-      setUser(appUser);
-      sessionStorage.setItem('sps_auth_user', JSON.stringify(appUser));
       setLoading(false);
     });
 

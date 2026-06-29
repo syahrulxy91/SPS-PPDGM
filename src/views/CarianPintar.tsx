@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Filter, FileText, Eye, ChevronRight, HelpCircle, Layers, Calendar, Compass, Clock } from 'lucide-react';
 import { readRows } from '../lib/sheets';
-import { getUnitDisplayName } from '../types';
+import { getUnitDisplayName, getStandardUnitFromSlugOrTitle } from '../types';
 
 export default function CarianPintar() {
   const [data, setData] = useState<any[]>([]);
@@ -42,11 +42,11 @@ export default function CarianPintar() {
                    (d.keterangan || '').toLowerCase().includes(query.toLowerCase()) ||
                    (d.uploadedBy || '').toLowerCase().includes(query.toLowerCase());
     const cMatch = catFilter ? d.kategori === catFilter : true;
-    const uMatch = unitFilter ? d.unit === unitFilter : true;
+    const uMatch = unitFilter ? getStandardUnitFromSlugOrTitle(d.unit) === getStandardUnitFromSlugOrTitle(unitFilter) : true;
     return qMatch && cMatch && uMatch;
   });
 
-  const uniqueUnits = Array.from(new Set(data.map(d => d.unit).filter(Boolean)));
+  const uniqueUnits = Array.from(new Set(data.map(d => getStandardUnitFromSlugOrTitle(d.unit)).filter(Boolean)));
   const uniqueCats = Array.from(new Set(data.map(d => d.kategori).filter(Boolean)));
 
   return (
@@ -150,13 +150,19 @@ export default function CarianPintar() {
                            {doc.kategori || 'SLA_FILE'}
                          </span>
                          <span className="text-[10px] text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
-                           {getUnitDisplayName(doc.unit).replace('Unit ', '')}
+                           {getUnitDisplayName(getStandardUnitFromSlugOrTitle(doc.unit)).replace('Unit ', '')}
                          </span>
                        </div>
                     </td>
                     <td className="p-4">
                       <div className="text-xs font-semibold text-slate-700">{doc.uploadedBy || 'Pegawai Sistem'}</div>
-                      <div className="text-[9px] text-slate-400 font-mono mt-0.5">{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString('ms-MY') : 'Tahun ' + doc.tahun}</div>
+                      <div className="text-[9px] text-slate-400 font-mono mt-0.5">
+                        {(() => {
+                          if (!doc.uploadedAt) return 'Tahun ' + (doc.tahun || '0000');
+                          const d = new Date(doc.uploadedAt);
+                          return isNaN(d.getTime()) ? 'Tahun ' + (doc.tahun || '0000') : d.toLocaleDateString('ms-MY');
+                        })()}
+                      </div>
                     </td>
                     <td className="p-4 pr-6 flex items-center justify-end">
                        <a href={doc.url} target="_blank" rel="noreferrer" className="flex items-center space-x-1.5 text-xs bg-white border border-slate-200 hover:border-indigo-500 hover:text-indigo-600 px-3 py-1.5 rounded-xl transition-all font-extrabold cursor-pointer hover:shadow-2xs">

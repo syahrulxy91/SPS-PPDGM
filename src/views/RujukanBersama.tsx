@@ -109,7 +109,11 @@ export default function RujukanBersama() {
                       </span>
                     </td>
                     <td className="p-4 text-sm text-gray-600">
-                      {new Date(doc.uploadedAt).toLocaleDateString('ms-MY')}
+                      {(() => {
+                        if (!doc.uploadedAt) return 'Tiada tarikh';
+                        const d = new Date(doc.uploadedAt);
+                        return isNaN(d.getTime()) ? 'Tiada tarikh' : d.toLocaleDateString('ms-MY');
+                      })()}
                     </td>
                     <td className="p-4 flex items-center justify-end space-x-3">
                        <a href={doc.url} target="_blank" rel="noreferrer" className="text-gray-400 hover:text-[#1565C0] flex items-center space-x-1 border border-gray-200 px-2 py-1 rounded bg-white" title="Lihat / Muat Turun">
@@ -147,19 +151,62 @@ function UploadRujukanModal({ onClose, onComplete }: { onClose: () => void, onCo
 
   const user = getCurrentAppUser();
 
+  const validateFile = (f: File): { isValid: boolean; message: string } => {
+    // Check size (20MB)
+    if (f.size > 20 * 1024 * 1024) {
+      return { isValid: false, message: "Saiz fail melebihi had maksimum 20MB." };
+    }
+
+    // Check extension
+    const parts = f.name.split('.');
+    if (parts.length < 2) {
+      return { isValid: false, message: "Jenis fail tidak dibenarkan." };
+    }
+    const ext = parts[parts.length - 1].toLowerCase();
+
+    const ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'jpg', 'jpeg', 'png'];
+    const REJECTED_EXTS = ['exe', 'bat', 'cmd', 'apk', 'js', 'jar', 'msi', 'dll', 'ps1', 'zip', 'rar', '7z', 'iso', 'mp4', 'avi', 'mov'];
+
+    if (REJECTED_EXTS.includes(ext) || !ALLOWED_EXTS.includes(ext)) {
+      return { isValid: false, message: "Jenis fail tidak dibenarkan." };
+    }
+
+    // Check mime-type
+    const mimeLower = (f.type || '').toLowerCase();
+    const ALLOWED_MIMES = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'image/jpeg',
+      'image/png',
+      'image/pjpeg',
+      'application/octet-stream'
+    ];
+
+    if (!ALLOWED_MIMES.includes(mimeLower)) {
+      return { isValid: false, message: "Jenis fail tidak dibenarkan." };
+    }
+
+    return { isValid: true, message: "" };
+  };
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return alert("Sila pilih fail");
+
+    const validation = validateFile(file);
+    if (!validation.isValid) {
+      return alert(validation.message);
+    }
+
     setLoading(true);
 
     try {
-      const { folderMap } = await initDriveFolders();
-      // use the mapping to get the right folder ID.
-      const folderId = folderMap['RUJUKAN_BERSAMA'];
-
-      if (!folderId) throw new Error("Folder Rujukan tidak dijumpai");
-
-      const uploaded = await uploadFileToDrive(file, folderId);
+      const uploaded = await uploadFileToDrive(file, 'RUJUKAN_BERSAMA');
       
       const newRow = [
         uploaded.id,
@@ -211,7 +258,19 @@ function UploadRujukanModal({ onClose, onComplete }: { onClose: () => void, onCo
             <input 
               type="file" 
               required
-              onChange={e => setFile(e.target.files?.[0] || null)}
+              onChange={e => {
+                const f = e.target.files?.[0] || null;
+                if (f) {
+                  const validation = validateFile(f);
+                  if (!validation.isValid) {
+                    alert(validation.message);
+                    e.target.value = '';
+                    setFile(null);
+                    return;
+                  }
+                }
+                setFile(f);
+              }}
               className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 border border-gray-300 rounded-md p-1"
             />
           </div>

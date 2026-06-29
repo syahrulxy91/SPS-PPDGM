@@ -7,7 +7,7 @@ import {
 import { readRows, appendRow } from '../lib/sheets';
 import { initDriveFolders, uploadFileToDrive } from '../lib/drive';
 import { getCurrentAppUser } from '../lib/auth';
-import { getUnitDisplayName } from '../types';
+import { getUnitDisplayName, getStandardUnitFromSlugOrTitle } from '../types';
 
 const KATEGORI = ['Mesyuarat', 'Pemantauan', 'Data', 'Surat', 'Program', 'Taklimat', 'Pekeliling', 'SOP', 'Template', 'Laporan Khas', 'Lain-Lain'];
 
@@ -38,7 +38,8 @@ export default function UnitDashboard() {
         return obj;
       });
 
-      const unitData = rows.filter(r => getUnitDisplayName(r.unit) === getUnitDisplayName(title)).reverse();
+      const standardTitle = getStandardUnitFromSlugOrTitle(title);
+      const unitData = rows.filter(r => getStandardUnitFromSlugOrTitle(r.unit) === standardTitle).reverse();
       setData(unitData);
 
       const now = new Date();
@@ -87,7 +88,7 @@ export default function UnitDashboard() {
             <span className="text-indigo-600 font-black">Laporan Unit</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight leading-tight">
-            {getUnitDisplayName(title)}
+            {getUnitDisplayName(getStandardUnitFromSlugOrTitle(title))}
           </h1>
           <p className="text-slate-400 text-xs sm:text-sm font-medium">
             Urus arkib penyerahan fail rasmi, semak log kemas kini, dan hantar laporan unit dengan mudah.
@@ -200,7 +201,13 @@ export default function UnitDashboard() {
                     </td>
                     <td className="p-4">
                       <div className="text-xs text-slate-600 font-bold font-mono">Bulan {doc.bulan || '00'} / {doc.tahun || '0000'}</div>
-                      <div className="text-[9px] text-slate-400 mt-0.5">{new Date(doc.uploadedAt).toLocaleDateString('ms-MY')}</div>
+                      <div className="text-[9px] text-slate-400 mt-0.5">
+                        {(() => {
+                          if (!doc.uploadedAt) return 'Tiada tarikh';
+                          const d = new Date(doc.uploadedAt);
+                          return isNaN(d.getTime()) ? 'Tiada tarikh' : d.toLocaleDateString('ms-MY');
+                        })()}
+                      </div>
                     </td>
                     <td className="p-4">
                       <div className="text-xs font-semibold text-slate-600 truncate max-w-[130px]" title={doc.uploadedBy}>{doc.uploadedBy}</div>
@@ -272,19 +279,64 @@ function UploadModal({ unitTitle, onClose, onComplete }: { unitTitle: string, on
 
   const user = getCurrentAppUser();
 
+  const validateFile = (f: File): { isValid: boolean; message: string } => {
+    // Check size (20MB)
+    if (f.size > 20 * 1024 * 1024) {
+      return { isValid: false, message: "Saiz fail melebihi had maksimum 20MB." };
+    }
+
+    // Check extension
+    const parts = f.name.split('.');
+    if (parts.length < 2) {
+      return { isValid: false, message: "Jenis fail tidak dibenarkan." };
+    }
+    const ext = parts[parts.length - 1].toLowerCase();
+
+    const ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'jpg', 'jpeg', 'png'];
+    const REJECTED_EXTS = ['exe', 'bat', 'cmd', 'apk', 'js', 'jar', 'msi', 'dll', 'ps1', 'zip', 'rar', '7z', 'iso', 'mp4', 'avi', 'mov'];
+
+    if (REJECTED_EXTS.includes(ext) || !ALLOWED_EXTS.includes(ext)) {
+      return { isValid: false, message: "Jenis fail tidak dibenarkan." };
+    }
+
+    // Check mime-type
+    const mimeLower = (f.type || '').toLowerCase();
+    const ALLOWED_MIMES = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'image/jpeg',
+      'image/png',
+      'image/pjpeg',
+      'application/octet-stream'
+    ];
+
+    if (!ALLOWED_MIMES.includes(mimeLower)) {
+      return { isValid: false, message: "Jenis fail tidak dibenarkan." };
+    }
+
+    return { isValid: true, message: "" };
+  };
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return alert("Sila pilih fail");
+
+    const validation = validateFile(file);
+    if (!validation.isValid) {
+      return alert(validation.message);
+    }
+
     setLoading(true);
 
     try {
-      const { folderMap } = await initDriveFolders();
-      const folderKey = unitTitle.replace(' ', '_');
-      const folderId = folderMap[folderKey];
-
-      if (!folderId) throw new Error("Folder unit tidak dijumpai");
-
-      const uploaded = await uploadFileToDrive(file, folderId);
+      // Get the correct display name of the unit as expected by the backend whitelist mapping
+      const unit = getStandardUnitFromSlugOrTitle(unitTitle);
+      const uploaded = await uploadFileToDrive(file, unit);
       
       const newRow = [
         uploaded.id,
@@ -295,7 +347,7 @@ function UploadModal({ unitTitle, onClose, onComplete }: { unitTitle: string, on
         form.bulan,
         uploaded.url,
         uploaded.size.toString(),
-        unitTitle,
+        unit,
         new Date().toISOString(),
         user?.name || 'Sistem',
         user?.email || ''
@@ -351,6 +403,15 @@ function UploadModal({ unitTitle, onClose, onComplete }: { unitTitle: string, on
               required
               onChange={e => {
                 const f = e.target.files?.[0] || null;
+                if (f) {
+                  const validation = validateFile(f);
+                  if (!validation.isValid) {
+                    alert(validation.message);
+                    e.target.value = '';
+                    setFile(null);
+                    return;
+                  }
+                }
                 setFile(f);
                 if (f && !form.name) {
                   // Pre-fill name without extension
@@ -393,7 +454,7 @@ function UploadModal({ unitTitle, onClose, onComplete }: { unitTitle: string, on
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Unit Penerbit:</label>
               <input 
                 type="text" 
-                value={getUnitDisplayName(unitTitle)}
+                value={getUnitDisplayName(getStandardUnitFromSlugOrTitle(unitTitle))}
                 disabled
                 className="w-full px-3 py-2 border border-slate-100 bg-slate-100 text-slate-400 rounded-xl font-bold font-mono text-[10px]"
               />

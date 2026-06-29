@@ -1,40 +1,192 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default Catch-all Deny
+    // 1. Default Catch-all Deny (Global Safety Net)
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions
+    // 2. Hardened Global Helper Functions (Attribute-Based Access Control)
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isMaintainer() {
-      return isSignedIn() && 
-        request.auth.token.email != null && 
-        request.auth.token.email == "syahrulxy91@gmail.com";
+    function hasEmail() {
+      return isSignedIn() && request.auth.token.email != null;
     }
+
+    function hasVerifiedEmail() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true || 
+        request.auth.token.email == "syahrulxy91@gmail.com"
+      );
+    }
+
+    function hasDomain(domain) {
+      return hasEmail() && request.auth.token.email.matches('.*' + domain + '$');
+    }
+
+    function isMoeEmail() {
+      return hasDomain("@moe.gov.my");
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && request.auth.token.appRole == role;
+    }
+
+    function isSuperAdmin() {
+      return hasVerifiedEmail() && (
+        (hasEmail() && request.auth.token.email == "syahrulxy91@gmail.com") ||
+        hasRole("SUPER_ADMIN")
+      );
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() || (
+        hasVerifiedEmail() && 
+        hasRole("ADMIN")
+      );
+    }
+
+    function isUser() {
+      return isAdmin() || (
+        hasVerifiedEmail() && (
+          hasRole("USER") || 
+          isMoeEmail()
+        )
+      );
+    }
+
+    // Helper to validate standard alphanumeric / hyphenated IDs
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Sheet Row schema validator (for laporan, rujukan, pengumuman, audit)
+    // Prevents "Denial of Wallet" and shadow field injection
+    function isValidSheetRow(data) {
+      return data.keys().hasAll(['values', 'createdAt']) 
+          && data.keys().size() == 2 
+          && data.values is list 
+          && data.values.size() <= 100
+          && data.createdAt is int;
+    }
+
+    // 3. Collection Rules with Least Privilege Enforcement
 
     // Centralized Google Drive & System Settings Configuration
     match /systemSettings/{configId} {
-      // Allow authenticated user with @moe.gov.my or maintainer to read configuration settings
-      allow read: if isSignedIn() && (
-        request.auth.token.email == "syahrulxy91@gmail.com" || 
-        request.auth.token.email.endsWith("@moe.gov.my")
-      );
-      // Only the static system maintainer can write to systemSettings
-      allow write: if isMaintainer();
+      allow read: if isUser();
+      allow write: if isSuperAdmin() && isValidId(configId);
     }
 
     // Sektor Pengurusan Sekolah Organizational Structure
     match /organisasi/{nodeId} {
-      allow read: if isSignedIn() && (
-        request.auth.token.email == "syahrulxy91@gmail.com" || 
-        request.auth.token.email.endsWith("@moe.gov.my")
+      allow read: if isUser();
+      allow write: if isSuperAdmin() && isValidId(nodeId);
+    }
+
+    // User Accounts and Role Escalation Prevention
+    match /users/{userId} {
+      allow read: if isSuperAdmin() || (isSignedIn() && request.auth.uid == userId);
+      
+      // On registration, role must default to USER, disabled must default to false
+      allow create: if isSignedIn() && request.auth.uid == userId 
+                    && incoming().uid == userId 
+                    && incoming().email is string
+                    && incoming().role == 'USER' 
+                    && incoming().disabled == false;
+      
+      // Prevent privilege escalation: users cannot modify their own role/disabled status
+      allow update: if isSignedIn() && (
+        isSuperAdmin() || (
+          request.auth.uid == userId 
+          && incoming().uid == userId
+          && (!incoming().diff(existing()).affectedKeys().hasAny(['role', 'disabled']))
+        )
       );
-      allow write: if isMaintainer();
+      
+      allow delete: if isSuperAdmin();
+    }
+
+    // Real-time Spreadsheet-Backed Collections
+    match /laporan/{docId} {
+      allow read: if isUser();
+      allow create, update: if isUser() && isValidSheetRow(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /rujukan/{docId} {
+      allow read: if isUser();
+      allow create, update: if isUser() && isValidSheetRow(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /pengumuman/{docId} {
+      allow read: if isUser();
+      allow create, update: if isUser() && isValidSheetRow(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /audit/{docId} {
+      allow read: if isUser();
+      allow create, update: if isUser() && isValidSheetRow(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Detailed Audit Uploads Logs (Client cannot write/modify)
+    match /auditUploads/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Enterprise Idempotency upload requests tracking (Client cannot write/modify)
+    match /uploadRequests/{uploadToken} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Administrative Security Event Logs (Client cannot write/modify)
+    match /securityLogs/{logId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
+    // Sliding Window Rate Limits Collection (Client cannot write/modify)
+    match /rateLimits/{limitId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
+    // Global and Daily Monitoring Metrics (Client cannot write/modify)
+    match /systemMetrics/{docId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
+    // Real-time Circuit Breaker and System Health Status (Client cannot write)
+    match /systemStatus/{docId} {
+      allow read: if isUser();
+      allow write: if false;
+    }
+
+    // Purely server-side audit trails and diagnostic logs (Denied to all clients)
+    match /configurationHistory/{docId} {
+      allow read, write: if false;
+    }
+    match /userActionLogs/{docId} {
+      allow read, write: if false;
+    }
+    match /systemLogs/{docId} {
+      allow read, write: if false;
     }
   }
 }

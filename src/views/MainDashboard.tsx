@@ -12,7 +12,7 @@ import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firesto
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Link } from 'react-router-dom';
 import { getCurrentAppUser } from '../lib/auth';
-import { getUnitDisplayName } from '../types';
+import { getUnitDisplayName, getStandardUnitFromSlugOrTitle } from '../types';
 
 // Helper to prevent Firestore connection from hanging indefinitely on write if blocked/offline
 const withWriteTimeout = <T extends unknown>(promise: Promise<T>, timeoutMs: number = 8000): Promise<T> => {
@@ -29,7 +29,7 @@ const withWriteTimeout = <T extends unknown>(promise: Promise<T>, timeoutMs: num
 
 export default function MainDashboard() {
   const user = getCurrentAppUser();
-  const isSuperAdminUser = user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
+  const isSuperAdminUser = user?.role === 'SUPER_ADMIN' || user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
 
   const [loading, setLoading] = useState(() => {
     const cachedStats = localStorage.getItem('sps_dashboard_stats');
@@ -65,6 +65,10 @@ export default function MainDashboard() {
   };
 
   const [unitFolders, setUnitFolders] = useState<Record<string, string>>(() => {
+    const config = getGoogleDriveConfigSync();
+    if (config && config.unitFolders && Object.keys(config.unitFolders).length > 0) {
+      return config.unitFolders;
+    }
     const custom = localStorage.getItem('sps_drive_unit_folders');
     if (custom) {
       try {
@@ -74,11 +78,11 @@ export default function MainDashboard() {
       }
     }
     return {
-      'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
-      'UNIT_RENDAH': 'UNIT_RENDAH',
-      'UNIT_MENENGAH': 'UNIT_MENENGAH',
-      'UNIT_SWASTA': 'UNIT_SWASTA',
-      'SIP': 'SIP',
+      'UNIT PRASEKOLAH': 'UNIT_PRASEKOLAH',
+      'UNIT RENDAH': 'UNIT_RENDAH',
+      'UNIT MENENGAH & TINGKATAN 6': 'UNIT_MENENGAH',
+      'UNIT SWASTA': 'UNIT_SWASTA',
+      'UNIT SIP+': 'SIP',
       'RUJUKAN_BERSAMA': 'RUJUKAN_BERSAMA'
     };
   });
@@ -105,6 +109,9 @@ export default function MainDashboard() {
         ]);
         const finalConfig = loadedConfig || googleDriveConfig;
         setGoogleDriveConfig(finalConfig);
+        if (finalConfig && finalConfig.unitFolders) {
+          setUnitFolders(finalConfig.unitFolders);
+        }
         const header = laporan[0] || [];
         const data = laporan.slice(1).map(row => {
           const obj: any = {};
@@ -128,7 +135,8 @@ export default function MainDashboard() {
             currMonthCount++;
           }
           if (row.unit) {
-            unitStats[row.unit] = (unitStats[row.unit] || 0) + 1;
+            const stdUnit = getStandardUnitFromSlugOrTitle(row.unit);
+            unitStats[stdUnit] = (unitStats[stdUnit] || 0) + 1;
           }
           if (row.uploadedBy) {
             activeEmails.add(row.uploadedBy.toLowerCase());
@@ -172,6 +180,7 @@ export default function MainDashboard() {
     const updatedConfig = {
       googleDriveEnabled: googleDriveConfig.googleDriveEnabled,
       googleDriveRootFolderId: googleDriveConfig.googleDriveRootFolderId,
+      unitFolders: unitFolders,
       updatedBy: updatedByEmail
     };
 
@@ -197,17 +206,18 @@ export default function MainDashboard() {
   const handleRestoreDriveDefaults = async () => {
     if (confirm('Adakah anda pasti mahu set semula nama direktori folder unit kepada tetapan asal laluan kilang?')) {
       const defaults = {
-        'UNIT_PRASEKOLAH': 'UNIT_PRASEKOLAH',
-        'UNIT_RENDAH': 'UNIT_RENDAH',
-        'UNIT_MENENGAH': 'UNIT_MENENGAH',
-        'UNIT_SWASTA': 'UNIT_SWASTA',
-        'SIP': 'SIP',
+        'UNIT PRASEKOLAH': 'UNIT_PRASEKOLAH',
+        'UNIT RENDAH': 'UNIT_RENDAH',
+        'UNIT MENENGAH & TINGKATAN 6': 'UNIT_MENENGAH',
+        'UNIT SWASTA': 'UNIT_SWASTA',
+        'UNIT SIP+': 'SIP',
         'RUJUKAN_BERSAMA': 'RUJUKAN_BERSAMA'
       };
 
       const restoredConfig = {
         googleDriveEnabled: true,
         googleDriveRootFolderId: '1-Gdkrl8YiQ-pJzi_vSV940qDRv_9OEaH',
+        unitFolders: defaults,
         updatedBy: user?.email || 'syahrulxy91@gmail.com'
       };
 
@@ -352,7 +362,13 @@ export default function MainDashboard() {
                   <h3 className="text-xs font-extrabold text-slate-700 truncate" title={report.name}>{report.name}</h3>
                   <div className="text-[10px] text-slate-500 mt-1 flex items-center justify-between">
                     <span className="truncate max-w-[120px] font-bold text-indigo-500 px-1.5 py-0.5 rounded-md bg-indigo-50 font-mono text-[9px] uppercase">{report.unit?.replace('UNIT_', '')}</span>
-                    <span className="text-slate-400 font-medium shrink-0">{new Date(report.uploadedAt).toLocaleDateString('ms-MY')}</span>
+                    <span className="text-slate-400 font-medium shrink-0">
+                      {(() => {
+                        if (!report.uploadedAt) return 'Tiada tarikh';
+                        const d = new Date(report.uploadedAt);
+                        return isNaN(d.getTime()) ? 'Tiada tarikh' : d.toLocaleDateString('ms-MY');
+                      })()}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -459,7 +475,11 @@ export default function MainDashboard() {
                       Sistem mengesan fail: Pengguna <span className="font-bold text-slate-800">{report.uploadedBy || 'Pegawai Sistem'}</span> memuat naik <span className="font-extrabold text-indigo-600">{report.name}</span> bagi unit <span className="font-black text-slate-700 font-mono text-[10px] bg-slate-100 px-1 py-0.5 rounded">{report.unit}</span>
                     </div>
                     <div className="text-[10px] text-slate-400 font-semibold shrink-0 font-mono">
-                      {new Date(report.uploadedAt).toLocaleDateString('ms-MY', { hour: '2-digit', minute: '2-digit' })}
+                      {(() => {
+                        if (!report.uploadedAt) return 'Tiada tarikh';
+                        const d = new Date(report.uploadedAt);
+                        return isNaN(d.getTime()) ? 'Tiada tarikh' : d.toLocaleDateString('ms-MY', { hour: '2-digit', minute: '2-digit' });
+                      })()}
                     </div>
                   </div>
                 ))}
@@ -603,7 +623,13 @@ export default function MainDashboard() {
                     <span className="text-slate-600 font-semibold">
                       Pegawai <span className="font-extrabold text-slate-800">{report.uploadedBy || 'Pentadbir'}</span> memuat naik <span className="text-indigo-600 font-extrabold font-mono">{report.name}</span>
                     </span>
-                    <span className="text-slate-400 font-semibold font-mono text-[10px] shrink-0 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">{new Date(report.uploadedAt).toLocaleDateString('ms-MY')}</span>
+                    <span className="text-slate-400 font-semibold font-mono text-[10px] shrink-0 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+                      {(() => {
+                        if (!report.uploadedAt) return 'Tiada tarikh';
+                        const d = new Date(report.uploadedAt);
+                        return isNaN(d.getTime()) ? 'Tiada tarikh' : d.toLocaleDateString('ms-MY');
+                      })()}
+                    </span>
                   </div>
                 ))}
                 <div className="text-xs py-3 px-4 bg-white border border-slate-100 rounded-2xl flex justify-between items-center text-slate-400 font-semibold">
@@ -697,11 +723,11 @@ export default function MainDashboard() {
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[
-                    { label: 'Unit Prasekolah', key: 'UNIT_PRASEKOLAH' },
-                    { label: 'Unit Rendah', key: 'UNIT_RENDAH' },
-                    { label: 'Unit Menengah & Tingkatan 6', key: 'UNIT_MENENGAH' },
-                    { label: 'Unit Swasta', key: 'UNIT_SWASTA' },
-                    { label: 'SIP+', key: 'SIP' },
+                    { label: 'Unit Prasekolah', key: 'UNIT PRASEKOLAH' },
+                    { label: 'Unit Rendah', key: 'UNIT RENDAH' },
+                    { label: 'Unit Menengah & Tingkatan 6', key: 'UNIT MENENGAH & TINGKATAN 6' },
+                    { label: 'Unit Swasta', key: 'UNIT SWASTA' },
+                    { label: 'SIP+', key: 'UNIT SIP+' },
                     { label: 'Bahan Rujukan Bersama', key: 'RUJUKAN_BERSAMA' }
                   ].map((u) => (
                     <div key={u.key} className="space-y-1.5 p-4 bg-slate-50/70 border border-slate-100 rounded-2xl hover:border-indigo-500/10 transition-colors">

@@ -29,7 +29,7 @@ export default function PengumumanView() {
 
   useEffect(() => { loadData(); }, []);
 
-  const isAdmin = user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
+  const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN' || user?.email?.toLowerCase() === 'syahrulxy91@gmail.com';
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,7 +101,7 @@ export default function PengumumanView() {
                      <h3 className="font-bold text-slate-800 text-lg">{noti.title}</h3>
                      <span className="text-xs font-semibold text-slate-500 flex items-center bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg">
                        <Calendar className="w-3 h-3 mr-1" />
-                       {new Date(noti.date).toLocaleDateString('ms-MY')}
+                       {(() => { if (!noti.date) return 'Tiada tarikh'; const d = new Date(noti.date); return isNaN(d.getTime()) ? 'Tiada tarikh' : d.toLocaleDateString('ms-MY'); })()}
                      </span>
                    </div>
                    <p className="text-slate-600 mt-2 whitespace-pre-wrap text-sm leading-relaxed">{noti.content}</p>

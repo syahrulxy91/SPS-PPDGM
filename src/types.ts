@@ -1,37 +1,35 @@
 export type Unit = 
-  | 'UNIT SWASTA' 
-  | 'UNIT RENDAH' 
-  | 'UNIT MENENGAH' 
-  | 'UNIT MENENGAH & TINGKATAN 6'
   | 'UNIT PRASEKOLAH'
-  | 'SIP'
-  | 'SIP+';
+  | 'UNIT SWASTA'
+  | 'UNIT RENDAH'
+  | 'UNIT MENENGAH & TINGKATAN 6'
+  | 'UNIT SIP+'
+  | 'RUJUKAN_BERSAMA';
 
 export function getUnitDisplayName(unit: string | undefined): string {
   if (!unit) return '';
-  const sanitized = unit.toUpperCase().replace(/_/g, ' ').trim();
+  const sanitized = unit.trim();
   
-  if (sanitized === 'UNIT MENENGAH' || sanitized === 'UNIT_MENENGAH' || sanitized.includes('MENENGAH')) {
-    return 'Unit Menengah & Tingkatan 6';
-  }
-  if (sanitized === 'UNIT SWASTA' || sanitized === 'SWASTA') {
-    return 'Unit Swasta';
-  }
-  if (sanitized === 'UNIT RENDAH' || sanitized === 'RENDAH') {
-    return 'Unit Rendah';
-  }
-  if (sanitized === 'UNIT PRASEKOLAH' || sanitized === 'PRASEKOLAH') {
-    return 'Unit Prasekolah';
-  }
-  if (sanitized.includes('SIP') || sanitized.includes('SUKAN')) {
-    return 'SIP+';
-  }
+  if (sanitized === 'UNIT PRASEKOLAH') return 'Unit Prasekolah';
+  if (sanitized === 'UNIT SWASTA') return 'Unit Swasta';
+  if (sanitized === 'UNIT RENDAH') return 'Unit Rendah';
+  if (sanitized === 'UNIT MENENGAH & TINGKATAN 6') return 'Unit Menengah & Tingkatan 6';
+  if (sanitized === 'UNIT SIP+') return 'Unit SIP+';
+  if (sanitized === 'RUJUKAN_BERSAMA') return 'Bahan Rujukan Bersama';
   
-  return sanitized
-    .toLowerCase()
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+  return sanitized;
+}
+
+export function getStandardUnitFromSlugOrTitle(input: string | undefined): string {
+  if (!input) return '';
+  const upper = input.toUpperCase().replace(/-/g, ' ').trim();
+  if (upper.includes('PRASEKOLAH')) return 'UNIT PRASEKOLAH';
+  if (upper.includes('SWASTA')) return 'UNIT SWASTA';
+  if (upper.includes('RENDAH')) return 'UNIT RENDAH';
+  if (upper.includes('MENENGAH')) return 'UNIT MENENGAH & TINGKATAN 6';
+  if (upper.includes('SIP')) return 'UNIT SIP+';
+  if (upper.includes('RUJUKAN') || upper.includes('BERSAMA')) return 'RUJUKAN_BERSAMA';
+  return upper;
 }
 
 export type Kategori = 
@@ -85,5 +83,42 @@ export interface AppUser {
   name: string;
   email: string;
   photoURL: string;
+  role?: 'SUPER_ADMIN' | 'ADMIN' | 'USER';
 }
+
+export type AuditEventType = 
+  | 'UPLOAD'
+  | 'DELETE'
+  | 'UPDATE'
+  | 'DOWNLOAD'
+  | 'VIEW'
+  | 'LOGIN'
+  | 'LOGOUT';
+
+export interface AuditUploadRecord {
+  id?: string;
+  eventType?: AuditEventType; // Optional for backward compatibility
+  uploadStatus?: 'SUCCESS' | 'FAILED';
+  uploadedByEmail?: string;
+  uploadedByName?: string;
+  unit?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  uploadTimestamp?: any; // Firestore serverTimestamp or Date string
+  driveFileId?: string;
+  driveFileUrl?: string;
+  userUid?: string;
+  userRole?: string;
+  originalFileName?: string;
+  
+  // Reka bentuk sedia untuk masa hadapan (Future-ready fields)
+  deletedBy?: string;
+  deletedAt?: string;
+  updatedBy?: string;
+  updatedAt?: string;
+  downloadedBy?: string;
+  downloadedAt?: string;
+}
+
 
